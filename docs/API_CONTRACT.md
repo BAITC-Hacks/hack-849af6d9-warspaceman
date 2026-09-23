@@ -76,3 +76,59 @@ Response `201`: `Team`.
 Response: `[Team]`.
 
 `Team`: `{ "id": 1, "name": "string", "interests": "string|null", "skills": "string|null", "technologies": "string|null" }`
+# ML service API
+
+Base URL: `http://localhost:8001` when running the ML service locally (`cd ML && uvicorn service.main:app --reload --port 8001`). Both endpoints accept and return JSON. Unknown card fields are `null`. A `X-Generation-Mode` response header is `openai` when extraction used the configured OpenAI API and `rule-based-stub` when it did not. Stub responses also include `X-Generation-Notice` explaining that no API key is configured. The service never supplies unsupported facts: extracted card values must be present in the draft or in a submitted answer.
+
+## `POST /generate-questions`
+
+Request:
+
+```json
+{
+  "draft_text": "We need a tool to help teams prepare monthly reports.",
+  "topic": "Monthly reporting"
+}
+```
+
+Response (`application/json`, a list of strings):
+
+```json
+[
+  "What context should the task card include for ‘Monthly reporting’?",
+  "Who will use the solution for ‘Monthly reporting’?",
+  "What source data or other materials will be available for ‘Monthly reporting’?"
+]
+```
+
+Questions ask only about details missing from the draft: context, users, data and materials, constraints, expected result, success criteria, and contact or interaction format. At least three questions are returned, including when most details have already been supplied. No assumptions about the task are presented as facts.
+
+## `POST /form-card`
+
+`questions` is a list of the question strings returned by `/generate-questions`. `answers` maps each question string to its answer; both may be empty.
+
+Request:
+
+```json
+{
+  "draft_text": "We need a tool to help teams prepare monthly reports.",
+  "questions": ["Who will use the solution?"],
+  "answers": {"Who will use the solution?": "Finance analysts."}
+}
+```
+
+Response (`application/json`):
+
+```json
+{
+  "context": null,
+  "need": "We need a tool to help teams prepare monthly reports.",
+  "users": "Finance analysts.",
+  "data_materials": null,
+  "constraints": null,
+  "expected_result": null,
+  "success_criteria": null
+}
+```
+
+The card contains exactly these seven keys. Unanswered or unsupported details are `null`. When no `OPENAI_API_KEY` is configured, a rule-based fallback preserves the draft verbatim as `need`, fills fields only from explicitly labelled draft lines or supplied answer text, and reports the fallback in the response headers.
