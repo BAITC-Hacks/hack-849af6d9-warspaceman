@@ -30,7 +30,7 @@ Response: `Task` with recalculated `rating_score`, `rating_breakdown`, `readines
 
 ### `GET /tasks/{id}/rating`
 
-Response: `{ "score": 0, "breakdown": { "context+need": 0, "data_materials": 0, "expected_result": 0, "success_criteria": 0, "constraints": 0, "users": 0, "contact+interaction_format": 0 }, "missing_fields": ["context"] }`
+Response: `{ "score": 0, "readiness_level": "draft", "breakdown": { "context+need": 0, "data_materials": 0, "expected_result": 0, "success_criteria": 0, "constraints": 0, "users": 0, "contact+interaction_format": 0 }, "missing_fields": ["context"], "suggestions": ["Add context"] }` (readiness is `draft`, `working`, `ready`, or `priority`; `suggestions` gives actionable guidance for each missing field.)
 
 ### `GET /tasks`
 

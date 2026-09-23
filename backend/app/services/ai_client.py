@@ -7,6 +7,8 @@ import httpx
 from app.core.config import ML_SERVICE_URL
 
 logger = logging.getLogger(__name__)
+CARD_FIELDS = ("title", "context", "need", "users", "data_materials", "constraints", "expected_result",
+               "success_criteria", "contact", "interaction_format", "topic")
 
 
 def _stub_questions(draft_text: str) -> list[str]:
@@ -27,8 +29,8 @@ async def get_clarifying_questions(draft_text: str, topic: str | None) -> list[s
             response.raise_for_status()
             data = response.json()
             questions = data.get("questions", data) if isinstance(data, dict) else data
-            if isinstance(questions, list) and len(questions) >= 3 and all(isinstance(q, str) for q in questions):
-                return questions
+            if isinstance(questions, list) and len(questions) >= 3 and all(isinstance(q, str) and q.strip() for q in questions):
+                return [q.strip() for q in questions]
     except Exception as exc:
         logger.warning("ML question generation failed; using deterministic fallback: %s", exc)
     return _stub_questions(draft_text)
@@ -57,7 +59,13 @@ async def build_card_from_answers(draft_text: str, questions: list[str], answers
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict) and isinstance(data.get("card", data), dict):
-                return data.get("card", data)
+                card = data.get("card", data)
+                if set(card).intersection(CARD_FIELDS) and all(
+                    field not in card or card[field] is None or isinstance(card[field], str)
+                    for field in CARD_FIELDS
+                ):
+                    return {field: card[field] for field in CARD_FIELDS if field in card}
+                logger.warning("ML card response did not match the task card schema; using deterministic fallback")
     except Exception as exc:
         logger.warning("ML card generation failed; using deterministic fallback: %s", exc)
     return _extract_card(draft_text, questions, answers)
