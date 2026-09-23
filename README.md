@@ -1,186 +1,399 @@
-﻿# Hack Alem AI 2026 — Business Task Catalog
+# Hack Alem AI 2026 — Business Task Catalog
 
-An MVP for turning a business need into an editable, rated task card, publishing confirmed tasks to a catalog, and letting student teams submit proposals for a manual business decision.
+> **From a vague business request to a clear student-ready challenge.**
 
-## Architecture
+Hack Alem AI is a hackathon MVP that helps a business turn a short problem description into a structured task card, measure how ready that task is for student teams, publish it to a shared catalog, receive proposals, and manually choose a team.
 
-```text
-Browser
-  │ HTTP/JSON on /api
-  ▼
-Frontend: React + Vite build, served by Nginx (:80 in Docker)
-  │ /api/* is proxied to backend:8000 with the prefix removed
-  ▼
-Backend: FastAPI (:8000) ──HTTP/JSON──▶ ML service: FastAPI (:8001)
-  │                                     └─ rule-based fallback without a key
-  └─ SQLite database at /data/app.db (persistent Docker volume)
-```
+---
 
-The service contract is documented in [docs/API_CONTRACT.md](docs/API_CONTRACT.md). The backend keeps the public API paths unchanged. In Docker, the browser calls `/api`; Nginx removes that prefix before forwarding requests to FastAPI.
-Inside Compose the backend calls `http://ml:8001`; local backend development defaults to `http://localhost:8001`.
+## ✨ What the product does
 
-## Problem and solution
+### For business
 
-Business requests often start as short descriptions that leave student teams unsure about users, available data, expected outcomes, constraints, and success measures. The platform guides a business user through clarification, presents an editable task card, rates its readiness, and publishes confirmed tasks for student proposals. The business user keeps the final team decision.
+1. Write a short description of a real business problem.
+2. Receive clarifying questions.
+3. Get an editable task card.
+4. See a **readiness score from 0 to 100**.
+5. Improve missing fields and recalculate the score.
+6. Publish the task to the catalog.
+7. Review team proposals.
+8. **Accept or reject proposals manually.**
 
-### MVP capabilities
+### For student teams
 
-- Business user creates a task and receives at least three clarification questions.
-- The submitted answers are saved with their questions and used to produce an editable card.
-- The card receives a deterministic readiness score and field-level improvement guidance.
-- Confirmed tasks appear in the shared catalog, including low-rated tasks; catalog filters support topic and readiness, with rating sort.
-- Student teams submit an idea, plan, duration/deadline, and prototype link.
-- Business users review proposals and manually accept or reject them. There is no automatic team assignment.
+1. Browse published business tasks.
+2. Filter by topic and readiness level.
+3. Open the full task brief.
+4. Create or select a team.
+5. Submit:
+   - solution idea;
+   - implementation plan;
+   - deadline;
+   - prototype link.
+6. Wait for the business decision.
 
-The MVP uses a demonstration role switch in the frontend. Authentication and advanced access control are outside its scope.
+The frontend uses a simple **Business / Student** demo role switch instead of full authentication.
 
-### Technologies and repository layout
+---
 
-- **Frontend:** React, Vite, Fetch API, CSS.
-- **Backend:** FastAPI, SQLAlchemy async, SQLite, aiosqlite, Pydantic, HTTPX.
-- **ML service:** FastAPI, OpenAI structured output when configured, and a rule-based fallback without a key.
+## 🎯 Why it matters
 
-```text
-.
-├── docker-compose.yml
-├── docs/API_CONTRACT.md
-├── frontend/       React/Vite app and Nginx packaging
-├── backend/        FastAPI routes, models, rating, and ML adapter
-└── ML/             FastAPI question and card service (uppercase path)
-```
+Business tasks are often too vague for students to start working immediately.
 
-The frontend talks only to the backend API. The backend calls the ML service; if it is unavailable, the backend's deterministic fallback keeps the main flow usable.
+Typical missing details:
 
-## Run the complete application with Docker
+- who will use the solution;
+- what data or materials are available;
+- what result is expected;
+- what constraints exist;
+- how success will be measured;
+- how the team can communicate with the business.
 
-Use Docker Desktop in **Linux-container mode** and run from the repository root:
+The platform makes these gaps visible and turns task quality into a transparent readiness score.
 
-```sh
-docker compose up --build -d
-```
+---
 
-Open [http://localhost:8080](http://localhost:8080). This builds a static frontend image and starts `frontend`, `backend`, and `ml`. It is not a hot-reload development setup: rebuild after source changes with the same command.
+## 🧠 Readiness score
 
-| Service | Container port | Host access | Health check |
-|---|---:|---|---|
-| frontend (Nginx) | 80 | `127.0.0.1:8080` | Static HTTP response |
-| backend (FastAPI) | 8000 | Compose network only | `GET /teams` checks app and database |
-| ml (FastAPI) | 8001 | Compose network only | `GET /health` |
+The backend calculates the score. The frontend only displays the result.
 
-Only the frontend is published to the host. Set `FRONTEND_PORT` in the environment or `.env.local` to use another host port. Ports 8000 and 8001 are not published, so local development servers may use them.
-
-The first build needs network access to download the official base images and the dependencies listed in the existing backend, ML, and frontend lock files. Containers use Linux Python and Node images; they do not use host Python, Node, virtual environments, `node_modules`, or a committed `dist` directory.
-
-### Optional local configuration
-
-The stack works without an API key and does not require an environment file. To set optional values, copy the secret-free example and edit the ignored local file:
-
-```powershell
-Copy-Item .env.example .env.local
-```
-
-Then launch with:
-
-```sh
-docker compose --env-file .env.local up --build -d
-```
-
-`OPENAI_API_KEY` is passed only to the ML container at runtime. Leave it empty to use the ML service's labelled rule-based mode. `OPENAI_MODEL` is optional and defaults to `gpt-4o-mini`. Do not put a real key in the tracked root `.env`, frontend variables, image build arguments, or source files. The root `.env` is currently tracked and empty; use `.env.local` for private values.
-
-Startup and health checks do not make paid provider requests. To opt into a separate provider-backed check, put your key in `.env.local`, start or recreate the ML service with `docker compose --env-file .env.local up -d --force-recreate ml`, then create a task through the UI or call `POST /api/tasks`. That request invokes the provider when the key is configured and may incur provider charges.
-
-### Check status, logs, and stop
-
-```sh
-docker compose ps
-docker compose logs -f frontend backend ml
-docker compose down
-```
-
-`docker compose ps` reports service health. The checks make local HTTP calls only: frontend static content, backend `GET /teams`, and ML `GET /health`. Healthy containers show that processes and local dependencies respond; they do not prove real AI quality or that a paid provider was used.
-
-The backend SQLite database is stored in the named `backend-data` volume at `/data/app.db`. The image prepares a writable `/data` directory for its non-root user. The data remains available across container recreation and ordinary `docker compose down` followed by `up`. Normal shutdown does not remove the volume. Do not remove the volume unless you intend to permanently erase the demo database.
-
-If port 8080 is occupied, set `FRONTEND_PORT` to a free port. If Docker reports it cannot connect to the engine, start Docker Desktop, switch it to Linux containers, wait for the engine to become ready, then retry the Compose command.
-
-### Rebuild and run backend regression tests
-
-Rebuild after changing frontend, backend, or ML source:
-
-```sh
-docker compose up --build -d
-```
-
-The backend image includes the regression tests. Run them in the Linux Python image with:
-
-```sh
-docker compose run --rm --no-deps backend python -m unittest discover -s tests -v
-```
-
-The suite uses a temporary SQLite database and mocked outbound ML HTTP; it does not modify the persistent demo database or make paid calls. A separate no-key smoke test against the real running ML container is needed to verify service-to-service connectivity and rule-based responses.
-
-## Local development without Docker
-
-Run each service from its own directory. The ML directory is uppercase `ML/`.
-
-Backend, from `backend/`:
-
-```sh
-python -m pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-ML, from `ML/`:
-
-```sh
-python -m pip install -r requirements-dev.txt
-uvicorn service.main:app --reload --port 8001
-```
-
-Frontend, from `frontend/`:
-
-```sh
-npm ci
-npm run dev
-```
-
-The Vite development server is available at [http://localhost:5173](http://localhost:5173). For local cross-origin API calls, set `VITE_API_BASE_URL=http://localhost:8000` in the frontend's local Vite environment. The Docker build sets `VITE_API_BASE_URL=/api` at build time.
-
-## Rating model
-
-The task rating is deterministic and ranges from 0 to 100. Points are awarded only when the corresponding information is present:
-
-| Card information | Points |
+| Category | Points |
 |---|---:|
-| Context and need | 20 |
+| Context + business need | 20 |
 | Data and materials | 20 |
 | Expected result | 15 |
 | Success criteria | 15 |
 | Constraints | 10 |
 | Users | 10 |
-| Business contact and interaction format | 10 |
+| Contact + interaction format | 10 |
+| **Maximum** | **100** |
 
-Readiness levels are `draft` (0–39), `working` (40–69), `ready` (70–89), and `priority` (90–100). Confirmed tasks remain visible in the catalog regardless of rating; catalog filters include topic and readiness, with optional rating sort. Business users make proposal decisions manually; the backend never automatically assigns a team.
+Readiness levels:
 
-## Demo flow
+| Score | Level |
+|---:|---|
+| 0–39 | Draft |
+| 40–69 | Working |
+| 70–89 | Ready |
+| 90–100 | Priority |
 
-1. Create a task from a short business description and answer the clarification questions.
-2. Review and edit the task card, then confirm it and inspect its rating.
-3. Find the confirmed task in the catalog and submit a team proposal.
-4. Review proposals and accept or reject them manually as the business user.
+A low score **does not hide a confirmed task**. It only shows how much clarification is still needed.
 
-Use synthetic demo data. The rating, catalog, and proposal flow does not require provider-backed AI.
+---
 
-### Walkthrough details
+## 🏗 Architecture
 
-1. Choose the business role and create a task from a short request such as “We need a service to help employees prepare monthly reports faster.” A topic such as `Reporting` is optional.
-2. Answer the returned clarification questions. Review the generated card and edit fields directly; the business user controls the final card contents.
-3. Confirm the card and inspect the 0–100 score, readiness level, breakdown, missing fields, and suggestions. Fill missing information and save changes; edits to a confirmed task recalculate its rating.
-4. Publish by confirming the task. Open the catalog and try topic filtering, readiness filtering, or rating sort. Low scores do not hide confirmed tasks.
-5. Create/select a student team, open the published task, and send a proposal with an idea, plan, estimated duration/deadline, and prototype link.
-6. Return to the business role, review the proposals, and manually accept or reject one. The API never selects a team automatically.
+```text
+Browser
+  │
+  │  HTTP / JSON
+  ▼
+Frontend — React + Vite + Nginx
+  │
+  │  /api/*
+  ▼
+Backend — FastAPI + SQLAlchemy + SQLite
+  │
+  │  HTTP / JSON
+  ▼
+ML service — FastAPI
+  │
+  ├─ OpenAI API when configured
+  └─ rule-based fallback without a key
+```
 
-For a focused API demo, the backend endpoints are:
+### Repository structure
+
+```text
+.
+├── frontend/             React/Vite UI
+├── backend/              FastAPI API, rating, DB, proposals
+├── ML/                   clarification + card extraction service
+├── docs/
+│   └── API_CONTRACT.md   source of truth for API shapes
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+## 🧰 Tech stack
+
+### Frontend
+- React
+- Vite
+- JavaScript
+- CSS
+- Fetch API
+- Nginx in Docker
+
+### Backend
+- Python
+- FastAPI
+- SQLAlchemy
+- SQLite
+- aiosqlite
+- Pydantic
+- HTTPX
+
+### ML / AI
+- Python
+- FastAPI
+- OpenAI API support
+- structured output
+- rule-based fallback when no API key is configured
+
+---
+
+# 🚀 Quick start with Docker
+
+This is the easiest way to run the whole project.
+
+### Requirements
+
+- Docker Desktop
+- Git
+
+### 1. Clone the repository
+
+```powershell
+git clone https://github.com/BAITC-Hacks/hack-849af6d9-warspaceman.git
+cd hack-849af6d9-warspaceman
+```
+
+### 2. Start Docker Desktop
+
+Wait until Docker is fully running.
+
+### 3. Build and start the project
+
+```powershell
+docker compose up --build -d
+```
+
+### 4. Open the app
+
+**http://localhost:8080**
+
+### 5. Check container status
+
+```powershell
+docker compose ps
+```
+
+Expected services:
+
+```text
+frontend
+backend
+ml
+```
+
+### 6. View logs
+
+```powershell
+docker compose logs -f
+```
+
+Or per service:
+
+```powershell
+docker compose logs -f frontend
+docker compose logs -f backend
+docker compose logs -f ml
+```
+
+### 7. Stop the project
+
+```powershell
+docker compose down
+```
+
+The SQLite demo database is stored in a Docker volume and survives a normal `docker compose down`.
+
+> Do not use `docker compose down -v` unless you intentionally want to delete demo data.
+
+---
+
+## 🔑 OpenAI API key — optional
+
+The project can run **without an OpenAI API key** using the local rule-based fallback.
+
+To enable the provider-backed AI path, copy the example environment file:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Then edit `.env.local`:
+
+```env
+FRONTEND_PORT=8080
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Start with:
+
+```powershell
+docker compose --env-file .env.local up --build -d
+```
+
+Do not commit real API keys.
+
+---
+
+# 🧪 How the jury can verify the solution
+
+The complete MVP can be checked in one end-to-end scenario.
+
+## 1. Business creates a task
+
+Switch to **Business** and click **Create task**.
+
+Example:
+
+```text
+We need a service that helps employees prepare monthly reports faster.
+```
+
+Optional topic:
+
+```text
+Reporting
+```
+
+Submit the draft.
+
+---
+
+## 2. Answer clarification questions
+
+The system returns targeted questions about missing information.
+
+Answer them and continue to the editable task card.
+
+---
+
+## 3. Review the task card and rating
+
+The task card contains fields such as:
+
+- title;
+- context;
+- business need;
+- users;
+- data and materials;
+- constraints;
+- expected result;
+- success criteria;
+- contact;
+- interaction format;
+- topic.
+
+The UI also shows:
+
+- readiness score;
+- readiness level;
+- score breakdown;
+- missing fields;
+- improvement suggestions.
+
+---
+
+## 4. Demonstrate rating growth
+
+Add missing information and press:
+
+```text
+Save & recalculate
+```
+
+The backend recalculates the score.
+
+This demonstrates the core gamification mechanic:
+
+```text
+weak task
+   ↓
+clarification
+   ↓
+better task
+   ↓
+higher readiness score
+```
+
+---
+
+## 5. Publish the task
+
+Press:
+
+```text
+Publish task
+```
+
+The confirmed task appears in the catalog.
+
+The catalog supports:
+
+- topic filtering;
+- readiness filtering;
+- rating sorting.
+
+---
+
+## 6. Student submits a proposal
+
+Switch to **Student**.
+
+Open the published task.
+
+Create or select a team and submit:
+
+- idea;
+- plan;
+- deadline;
+- prototype link.
+
+---
+
+## 7. Business makes the decision
+
+Switch back to **Business** on the same task.
+
+The proposal list is shown with team names and status.
+
+The business can manually:
+
+```text
+Accept proposal
+Reject
+```
+
+There is **no automatic team assignment**.
+
+---
+
+## ✅ Demo flow in one line
+
+```text
+Draft
+→ Clarification
+→ Editable Card
+→ Readiness Score
+→ Improvement
+→ Publish
+→ Catalog
+→ Team Proposal
+→ Business Decision
+```
+
+---
+
+## 🔌 Main backend API
+
+### Tasks
 
 ```text
 POST  /tasks
@@ -189,41 +402,137 @@ PATCH /tasks/{id}
 POST  /tasks/{id}/confirm
 GET   /tasks/{id}/rating
 GET   /tasks
-POST  /teams
-GET   /teams
+```
+
+### Teams
+
+```text
+POST /teams
+GET  /teams
+```
+
+### Proposals
+
+```text
 POST  /tasks/{id}/proposals
 GET   /tasks/{id}/proposals
 PATCH /proposals/{id}
 ```
 
-The full request/response shapes and nullable fields are in the [API contract](docs/API_CONTRACT.md). To prepare for proposal submission, first ensure at least one team exists; teams can be created from the UI or with `POST /teams` through the API. Proposal decisions use the documented `pending`, `accepted`, and `rejected` statuses and remain a business action.
+Full request and response shapes are documented in:
 
-### Rating and readiness reference
+**[docs/API_CONTRACT.md](docs/API_CONTRACT.md)**
 
-| Category | Points |
-|---|---:|
-| Context and need | 20 |
-| Data and materials | 20 |
-| Expected result | 15 |
-| Success criteria | 15 |
-| Constraints | 10 |
-| Users | 10 |
-| Business contact and interaction format | 10 |
-| **Maximum** | **100** |
+---
 
-| Score | Readiness |
-|---:|---|
-| 0–39 | Draft |
-| 40–69 | Working |
-| 70–89 | Ready |
-| 90–100 | Priority |
+# 💻 Local development without Docker
 
-The backend owns this formula; the frontend displays the response and does not calculate its own score. Points count when the required card information is present.
+Use three terminals.
 
-### ML behavior
+## Backend
 
-The ML service exposes `POST /generate-questions` and `POST /form-card`. Without `OPENAI_API_KEY`, it uses a labelled rule-based response and makes no provider request. With a key, task creation and answer submission may invoke the configured provider. Container health checks call only local health routes and do not indicate whether provider-backed AI ran or whether its output is high quality.
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
 
-## Scope of the MVP
+Backend:
 
-The demo focuses on the task-to-proposal flow. User registration, password recovery, complex role management, chat, notifications, file storage, payment, and automatic team assignment are not included.
+**http://localhost:8000**
+
+Swagger:
+
+**http://localhost:8000/docs**
+
+---
+
+## ML service
+
+```powershell
+cd ML
+python -m pip install -r requirements-dev.txt
+uvicorn service.main:app --reload --port 8001
+```
+
+Health endpoint:
+
+**http://localhost:8001/health**
+
+---
+
+## Frontend
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Frontend:
+
+**http://localhost:5173**
+
+The frontend API client supports `VITE_API_BASE_URL` for explicit local API configuration. In Docker, the frontend uses `/api` through Nginx.
+
+---
+
+## 🔍 Useful Docker commands
+
+Rebuild everything:
+
+```powershell
+docker compose up --build -d
+```
+
+Rebuild only frontend:
+
+```powershell
+docker compose up --build -d frontend
+```
+
+Check running services:
+
+```powershell
+docker compose ps
+```
+
+Tail logs:
+
+```powershell
+docker compose logs -f frontend backend ml
+```
+
+Stop:
+
+```powershell
+docker compose down
+```
+
+---
+
+## 📌 MVP scope
+
+Intentionally not included:
+
+- full registration and password recovery;
+- complex role management;
+- chat;
+- notifications;
+- calendar;
+- file storage;
+- payment;
+- automatic team assignment;
+- full project tracking.
+
+The goal is to demonstrate one reliable end-to-end workflow from a raw business need to a real student proposal and a manual business decision.
+
+---
+
+## 📄 API contract
+
+The API contract between services is maintained in:
+
+**[docs/API_CONTRACT.md](docs/API_CONTRACT.md)**
+
+It is the source of truth for endpoint paths and request/response structures.
