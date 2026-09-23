@@ -93,7 +93,20 @@ input,textarea,select { width:100%; border:1px solid var(--border); border-radiu
 input,select { min-height:44px; padding:10px 12px; }
 textarea { min-height:124px; padding:12px 14px; resize:vertical; line-height:1.55; }
 input::placeholder,textarea::placeholder { color:#5d6676; }
-select { color-scheme:dark; }
+select {
+  color-scheme: dark;
+  background-color: #111318;
+  color: var(--text);
+}
+select option,
+select optgroup {
+  background-color: #111318;
+  color: #f6f7fb;
+}
+select option:checked {
+  background-color: #5f52d6;
+  color: #ffffff;
+}
 input:focus,textarea:focus,select:focus { outline:0; border-color:rgba(124,108,255,.75); box-shadow:0 0 0 4px rgba(124,108,255,.13),0 0 24px rgba(124,108,255,.08); background:rgba(255,255,255,.065); }
 
 button { border:1px solid rgba(124,108,255,.42); border-radius:12px; padding:10px 15px; background:linear-gradient(135deg,#7567f8,#5d65eb); color:#fff; font-weight:760; cursor:pointer; box-shadow:0 9px 24px rgba(79,67,204,.22); transition:transform var(--ease),box-shadow var(--ease),background var(--ease),opacity var(--ease); }
