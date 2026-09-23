@@ -2,6 +2,20 @@ import { useEffect, useState } from 'react'
 import { listTasks } from '../api/tasks'
 import ReadinessScore from '../components/ReadinessScore'
 import { EmptyState, LoadingState } from '../components/StatePanel'
+import Select from '../components/Select'
+
+const readinessOptions = [
+  { value: '', label: 'All levels' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'working', label: 'Working' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'priority', label: 'Priority' },
+]
+
+const sortOptions = [
+  { value: '', label: 'Newest first' },
+  { value: 'rating', label: 'Highest rating' },
+]
 
 export default function Catalog({ onSelect }) {
   const [tasks, setTasks] = useState([])
@@ -40,8 +54,8 @@ export default function Catalog({ onSelect }) {
       <div className="filters-panel glass-panel" aria-label="Catalog filters">
         <div className="filter-copy"><span className="eyebrow">Find your fit</span><strong>Filter the catalog</strong></div>
         <label>Topic<input placeholder="e.g. Reporting" value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
-        <label>Readiness<select value={readiness} onChange={(event) => setReadiness(event.target.value)}><option value="">All levels</option><option value="draft">Draft</option><option value="working">Working</option><option value="ready">Ready</option><option value="priority">Priority</option></select></label>
-        <label>Sort<select value={sort} onChange={(event) => setSort(event.target.value)}><option value="">Newest first</option><option value="rating">Highest rating</option></select></label>
+        <Select label="Readiness" value={readiness} options={readinessOptions} onChange={setReadiness} />
+        <Select label="Sort" value={sort} options={sortOptions} onChange={setSort} />
       </div>
 
       {error && <div className="feedback feedback-error" role="alert"><strong>Catalog unavailable</strong><span>{error}</span></div>}
