@@ -1,4 +1,4 @@
-# Hack Alem AI 2026 — Business Task Catalog
+# Business Task Catalog
 
 > **From a vague business request to a clear student-ready challenge.**
 
