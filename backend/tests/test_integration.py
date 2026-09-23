@@ -385,7 +385,12 @@ class BackendIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(page.status_code, 200)
                 self.assertIn("local demo", page.text.lower())
                 self.assertNotIn(token, page.text)
-                self.assertNotIn("fetch(", page.text.split("<script>", 1)[1].split("</script>", 1)[0].split("onclick", 1)[0])
+                script = page.text.split("<script>", 1)[1].split("</script>", 1)[0]
+                self.assertIn("async function call(", script)
+                self.assertIn("onclick=()=>call('/status')", script)
+                self.assertIn("onclick=()=>call('/seed','POST')", script)
+                self.assertEqual(script.count("call('/status')"), 1)
+                self.assertEqual(script.count("call('/seed','POST')"), 1)
                 for header in ("cache-control", "x-content-type-options", "x-frame-options"):
                     self.assertIn(header, page.headers)
                 self.assertEqual((await client.get("/admin/demo/status")).status_code, 403)

@@ -80,7 +80,8 @@ def _drafts():
         ["Какие материалы можно предоставить?", "Какой срок актуален?", "Кто контакт со стороны бизнеса?"],
         ["Какую проблему нужно решить?", "С кем команде взаимодействовать?", "Что будет считаться успехом?"],
     ]
-    return [Task(title=f"Черновик: демо-задача {i}", context=description, topic=topics[i - 1], status="clarifying")
+    return [Task(title=f"Черновик: демо-задача {i}", context=description, topic=topics[i - 1],
+                 status="clarifying", questions=[])
             for i, description in enumerate(descriptions, 1)], question_sets
 
 
