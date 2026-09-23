@@ -12,7 +12,9 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-The service works without an API key using its labelled rule-based fallback. That fallback recognizes explicitly labelled fields, the service's generated question templates, and unambiguous question wording; unfamiliar or ambiguous answer questions are left unmapped. Whole-answer placeholders such as `TBD`, `not sure`, `не знаю`, `пока неизвестно`, and `уточним позже` count as unknown. This is deliberately conservative: a substantive answer containing one of those phrases is retained, and meaningful negatives such as “No personal data may be used” remain data. To enable AI extraction, set `OPENAI_API_KEY` in your shell environment or environment manager; never put a real key in a repository file. Leave it unset to use the fallback. You can optionally set `OPENAI_MODEL`; the default is `gpt-4o-mini`. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
+Put the OpenAI key in `ML/.env` as `OPENAI_API_KEY=...`; this is the only file you need to edit. The local `.env` initially contains a nonfunctional placeholder, which deliberately selects the rule-based fallback. `ML/.env` is ignored by Git. `.env.example` contains placeholders only. The service reads `.env` relative to `service/main.py`, regardless of the current directory. Existing shell environment variables take precedence over `.env`; clear a shell `OPENAI_API_KEY` override if you want the file value to take effect. `OPENAI_MODEL` is also read there and defaults to `gpt-4o-mini`.
+
+The service works without a configured API key using its labelled rule-based fallback. That fallback recognizes explicitly labelled fields, the service's generated question templates, and unambiguous question wording; unfamiliar or ambiguous answer questions are left unmapped. Whole-answer placeholders such as `TBD`, `not sure`, `не знаю`, `пока неизвестно`, and `уточним позже` count as unknown. This is deliberately conservative: a substantive answer containing one of those phrases is retained, and meaningful negatives such as “No personal data may be used” remain data. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
 
 ## Launch
 
@@ -23,6 +25,8 @@ uvicorn service.main:app --reload --port 8001
 ```
 
 The API is available at `http://localhost:8001`; interactive API docs are at `http://localhost:8001/docs`. Responses include `X-Generation-Mode: openai` or `X-Generation-Mode: rule-based-stub`. Stub responses also include `X-Generation-Notice`.
+
+After changing `ML/.env`, stop the running service and launch it again with the command above so it reads the updated configuration.
 
 ## Tests
 
@@ -39,6 +43,16 @@ python evaluation/run_evaluation.py
 ```
 
 The offline evaluator loads 13 synthetic cases from `evaluation/cases.json`, exercises `/generate-questions` and then `/form-card` in-process, reports exact field matches, missing expected values, and unexpectedly populated fields, and exits nonzero on failures. It clears the API key for these calls and does not contact a provider. Its results measure the rule-based fallback only.
+
+## Optional live smoke test
+
+With the local service running and a real key configured, run:
+
+```sh
+python scripts/live_smoke_test.py
+```
+
+This sends one synthetic draft through both endpoints and reports response schema validity, generation modes, and evidence/mapping checks. It makes OpenAI requests and incurs API usage. A passing smoke test checks only that sample; it does not prove general extraction accuracy. The script refuses to run if the key is absent or is still the placeholder. It is optional and is not part of the offline test suite.
 
 ## Demo requests
 

@@ -6,11 +6,24 @@ import json
 import os
 import re
 import unicodedata
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Response
+from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
+
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+PLACEHOLDER_API_KEY = "KQVD2FJVCQEQJYC6"
+
+
+def _load_service_environment(dotenv_path: str | Path = ENV_FILE) -> None:
+    """Load ML/.env without overriding variables supplied by the shell."""
+    load_dotenv(dotenv_path=dotenv_path, override=False)
+
+
+_load_service_environment()
 
 app = FastAPI(title="Warspaceman ML service", version="1.0.0")
 
@@ -190,6 +203,12 @@ def _is_non_answer(value: str | None) -> bool:
         "tbd", "not sure", "not sure yet", "unknown", "to be determined",
         "will confirm later", "confirm later", "n a", "na",
     }
+
+
+def _configured_api_key() -> str:
+    """Return an API key only when it is not empty or the documented placeholder."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    return "" if not api_key or api_key == PLACEHOLDER_API_KEY else api_key
 
 
 def _labelled_values(text: str) -> dict[str, str]:
@@ -481,7 +500,7 @@ def health() -> dict[str, str]:
 @app.post("/generate-questions", response_model=list[str])
 def generate_questions(request: GenerateQuestionsRequest, response: Response) -> list[str]:
     """Return clarifying questions without asserting unprovided information."""
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = _configured_api_key()
     if not api_key:
         _set_mode_headers(response, "rule-based-stub")
         return _make_questions(request.draft_text, request.topic)
@@ -502,7 +521,7 @@ def generate_questions(request: GenerateQuestionsRequest, response: Response) ->
 @app.post("/form-card", response_model=TaskCard)
 def form_card(request: FormCardRequest, response: Response) -> TaskCard:
     """Extract a Task card, falling back to labelled user-provided text."""
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = _configured_api_key()
     if not api_key:
         _set_mode_headers(response, "rule-based-stub")
         return _rule_based_card(request)

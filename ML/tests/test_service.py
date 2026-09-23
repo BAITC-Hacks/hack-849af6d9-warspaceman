@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,6 +17,57 @@ CARD_FIELDS = {
     "expected_result",
     "success_criteria",
 }
+
+
+def test_dotenv_path_is_derived_from_service_location_not_working_directory(monkeypatch):
+    env_file = Path(main.__file__).resolve().parents[1] / ".env"
+    assert main.ENV_FILE == env_file
+
+    local_env = env_file.parent / ".env.test-config"
+    try:
+        local_env.write_text("OPENAI_MODEL=local-test-model\n", encoding="utf-8")
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+        monkeypatch.chdir(env_file.parent / "tests")
+        main._load_service_environment(local_env)
+        assert os.environ["OPENAI_MODEL"] == "local-test-model"
+    finally:
+        local_env.unlink(missing_ok=True)
+
+
+def test_shell_environment_takes_precedence_over_dotenv(monkeypatch):
+    env_file = Path(main.__file__).resolve().parents[1] / ".env.test-precedence"
+    try:
+        env_file.write_text(
+            "OPENAI_API_KEY=file-value\nOPENAI_MODEL=file-model\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("OPENAI_API_KEY", "shell-value")
+        monkeypatch.setenv("OPENAI_MODEL", "shell-model")
+        main._load_service_environment(env_file)
+        assert os.environ["OPENAI_API_KEY"] == "shell-value"
+        assert os.environ["OPENAI_MODEL"] == "shell-model"
+    finally:
+        env_file.unlink(missing_ok=True)
+
+
+def test_empty_and_placeholder_keys_use_rule_based_fallback(monkeypatch):
+    def unexpected_provider_call(**kwargs):
+        raise AssertionError("unconfigured key must not call OpenAI")
+
+    monkeypatch.setattr(main, "OpenAI", unexpected_provider_call)
+    for key in ("", main.PLACEHOLDER_API_KEY):
+        monkeypatch.setenv("OPENAI_API_KEY", key)
+        questions = client.post(
+            "/generate-questions", json={"draft_text": "A synthetic draft.", "topic": "Demo"}
+        )
+        card = client.post(
+            "/form-card", json={"draft_text": "A synthetic draft.", "questions": [], "answers": {}}
+        )
+        assert questions.status_code == 200
+        assert card.status_code == 200
+        assert questions.headers["X-Generation-Mode"] == "rule-based-stub"
+        assert card.headers["X-Generation-Mode"] == "rule-based-stub"
+        assert "X-Generation-Notice" in questions.headers
+        assert "X-Generation-Notice" in card.headers
 
 
 def test_questions_are_three_distinct_and_follow_russian_input(monkeypatch):
