@@ -6,7 +6,7 @@ Hack Alem AI is a hackathon MVP that helps a business turn a short problem descr
 
 ---
 
-## ✨ What the product does
+## What the product does
 
 ### For business
 
@@ -36,7 +36,7 @@ The frontend uses a simple **Business / Student** demo role switch instead of fu
 
 ---
 
-## 🎯 Why it matters
+## Why it matters
 
 Business tasks are often too vague for students to start working immediately.
 
@@ -53,7 +53,7 @@ The platform makes these gaps visible and turns task quality into a transparent 
 
 ---
 
-## 🧠 Readiness score
+## Readiness score
 
 The backend calculates the score. The frontend only displays the result.
 
@@ -81,7 +81,7 @@ A low score **does not hide a confirmed task**. It only shows how much clarifica
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ```text
 Browser
@@ -117,7 +117,7 @@ ML service — FastAPI
 
 ---
 
-## 🧰 Tech stack
+## Tech stack
 
 ### Frontend
 - React
@@ -145,7 +145,7 @@ ML service — FastAPI
 
 ---
 
-# 🚀 Quick start with Docker
+# Quick start with Docker
 
 This is the easiest way to run the whole project.
 
@@ -215,7 +215,7 @@ The SQLite demo database is stored in a Docker volume and survives a normal `doc
 
 ---
 
-## 🔑 OpenAI API key — optional
+## OpenAI API key — optional
 
 The project can run **without an OpenAI API key** using the local rule-based fallback.
 
@@ -243,7 +243,7 @@ Do not commit real API keys.
 
 ---
 
-# 🧪 How the jury can verify the solution
+# How the jury can verify the solution
 
 The complete MVP can be checked in one end-to-end scenario.
 
@@ -375,7 +375,7 @@ There is **no automatic team assignment**.
 
 ---
 
-## ✅ Demo flow in one line
+## Demo flow in one line
 
 ```text
 Draft
@@ -391,7 +391,7 @@ Draft
 
 ---
 
-## 🔌 Main backend API
+## Main backend API
 
 ### Tasks
 
@@ -425,7 +425,7 @@ Full request and response shapes are documented in:
 
 ---
 
-# 💻 Local development without Docker
+# Local development without Docker
 
 Use three terminals.
 
@@ -477,7 +477,7 @@ The frontend API client supports `VITE_API_BASE_URL` for explicit local API conf
 
 ---
 
-## 🔍 Useful Docker commands
+## Useful Docker commands
 
 Rebuild everything:
 
@@ -511,7 +511,7 @@ docker compose down
 
 ---
 
-## 📌 MVP scope
+## MVP scope
 
 Intentionally not included:
 
@@ -529,7 +529,7 @@ The goal is to demonstrate one reliable end-to-end workflow from a raw business 
 
 ---
 
-## 📄 API contract
+## API contract
 
 The API contract between services is maintained in:
 
