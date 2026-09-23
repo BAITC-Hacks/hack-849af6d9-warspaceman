@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import get_db
+from app.core.db import commit_or_rollback, get_db
 from app.models import Proposal, Task, Team
 from app.schemas import ProposalCreate, ProposalRead, ProposalUpdate
 
@@ -20,8 +20,11 @@ async def create_proposal(task_id: int, payload: ProposalCreate, db: AsyncSessio
         raise HTTPException(status_code=404, detail="Team not found")
     proposal = Proposal(task_id=task_id, **payload.model_dump())
     db.add(proposal)
-    await db.commit()
-    await db.refresh(proposal)
+    await commit_or_rollback(db)
+    await db.refresh(
+        proposal,
+        attribute_names=["id", "task_id", "team_id", "idea", "plan", "deadline", "link", "status", "created_at"],
+    )
     return proposal
 
 
@@ -43,6 +46,9 @@ async def update_proposal(proposal_id: int, payload: ProposalUpdate, db: AsyncSe
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail="Only pending proposals can be decided")
     proposal.status = payload.status
-    await db.commit()
-    await db.refresh(proposal)
+    await commit_or_rollback(db)
+    await db.refresh(
+        proposal,
+        attribute_names=["id", "task_id", "team_id", "idea", "plan", "deadline", "link", "status", "created_at"],
+    )
     return proposal

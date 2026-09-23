@@ -1,0 +1,389 @@
+import atexit
+import importlib
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+
+_test_directory = tempfile.TemporaryDirectory(prefix="warspaceman-backend-tests-")
+atexit.register(_test_directory.cleanup)
+_database_path = Path(_test_directory.name) / "isolated.sqlite3"
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_database_path.as_posix()}"
+
+from app.core import config  # noqa: E402
+from app.core.db import Base, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import ClarifyingQuestion, Proposal, Task, Team  # noqa: E402,F401
+from app.services import ai_client  # noqa: E402
+from app.services.rating import calculate_rating, readiness_for_score  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+
+
+QUESTIONS = [
+    "What specific need or problem should this task address?",
+    "Who are the intended users or beneficiaries?",
+    "What result would show that the task is successful?",
+]
+CARD = {
+    "context": "User supplied context",
+    "need": "User supplied need",
+    "users": "Analysts",
+    "data_materials": None,
+    "constraints": None,
+    "expected_result": "A usable result",
+    "success_criteria": None,
+}
+
+
+class BackendIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.lifespan = app.router.lifespan_context(app)
+        await self.lifespan.__aenter__()
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+            await connection.run_sync(Base.metadata.create_all)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        )
+        self.requests = []
+        self.ml_handler = self._success_handler
+        self.ml_patch = patch.object(ai_client, "_new_ml_client", side_effect=self._ml_client)
+        self.ml_patch.start()
+        self.addAsyncCleanup(self._async_cleanup)
+
+    async def _async_cleanup(self):
+        self.ml_patch.stop()
+        await self.client.aclose()
+        await self.lifespan.__aexit__(None, None, None)
+        await engine.dispose()
+
+    def _ml_client(self, timeout):
+        return httpx.AsyncClient(
+            timeout=timeout, transport=httpx.MockTransport(self._recording_handler)
+        )
+
+    def _recording_handler(self, request):
+        self.requests.append(request)
+        return self.ml_handler(request)
+
+    def _success_handler(self, request):
+        if request.url.path == "/generate-questions":
+            payload = json.loads(request.content)
+            assert isinstance(payload["topic"], str) and payload["topic"].strip()
+            return httpx.Response(200, json=QUESTIONS)
+        if request.url.path == "/form-card":
+            payload = json.loads(request.content)
+            assert isinstance(payload["answers"], dict)
+            assert set(payload["answers"]) == set(payload["questions"])
+            return httpx.Response(200, json=CARD)
+        raise AssertionError(f"Unexpected ML path {request.url.path}")
+
+    async def create_task(self, topic=None, include_topic=True):
+        body = {"draft_text": "A business needs a task card"}
+        if include_topic:
+            body["topic"] = topic
+        response = await self.client.post("/tasks", json=body)
+        self.assertEqual(response.status_code, 201, response.text)
+        data = response.json()
+        self.assertGreaterEqual(len(data["questions"]), 3)
+        return data
+
+    async def test_topic_adaptation_override_and_create_serialization(self):
+        data = await self.create_task(topic=None)
+        self.assertIsNone(data["task"]["topic"])
+        generated_request = self.requests[0]
+        self.assertEqual(str(generated_request.url), f"{ai_client.ML_SERVICE_URL}/generate-questions")
+        self.assertEqual(json.loads(generated_request.content)["topic"], ai_client.NEUTRAL_TOPIC)
+        self.assertIsNotNone(data["task"]["created_at"])
+        self.assertEqual([item["order"] for item in data["questions"]], [1, 2, 3])
+
+        original_env = os.environ.get("ML_SERVICE_URL")
+        try:
+            with patch.dict(os.environ, {"ML_SERVICE_URL": "http://ml-override:9123"}):
+                importlib.reload(config)
+                self.assertEqual(config.ML_SERVICE_URL, "http://ml-override:9123")
+        finally:
+            if original_env is None:
+                os.environ.pop("ML_SERVICE_URL", None)
+            else:
+                os.environ["ML_SERVICE_URL"] = original_env
+            importlib.reload(config)
+
+        with patch.object(ai_client, "ML_SERVICE_URL", "http://ml-override:9123"):
+            await self.create_task(topic="Override")
+            self.assertEqual(str(self.requests[-1].url), "http://ml-override:9123/generate-questions")
+
+    async def test_list_id_and_text_answers_normalize_and_partial_merge(self):
+        first = await self.create_task(include_topic=False)
+        first_answers = ["Need one", "Users one", "Success one"]
+        response = await self.client.patch(
+            f"/tasks/{first['task']['id']}/answers", json={"answers": first_answers}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        sent = json.loads(self.requests[-1].content)["answers"]
+        self.assertEqual(sent, dict(zip(QUESTIONS, first_answers)))
+
+        second = await self.create_task(topic="Industry")
+        question_ids = [item["id"] for item in second["questions"]]
+        response = await self.client.patch(
+            f"/tasks/{second['task']['id']}/answers",
+            json={"answers": {str(question_ids[0]): "Need two"}},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(json.loads(self.requests[-1].content)["answers"][QUESTIONS[0]], "Need two")
+        response = await self.client.patch(
+            f"/tasks/{second['task']['id']}/answers",
+            json={"answers": {QUESTIONS[1]: "Users two"}},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        sent = json.loads(self.requests[-1].content)["answers"]
+        self.assertEqual(sent[QUESTIONS[0]], "Need two")
+        self.assertEqual(sent[QUESTIONS[1]], "Users two")
+        self.assertEqual(sent[QUESTIONS[2]], "")
+
+        stored = await self.client.get(f"/tasks/{second['task']['id']}/rating")
+        self.assertEqual(stored.status_code, 200)
+        from app.core.db import SessionLocal
+
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(ClarifyingQuestion).where(ClarifyingQuestion.task_id == second["task"]["id"])
+            )
+            saved = {item.question_text: item.answer_text for item in result.scalars()}
+        self.assertEqual(saved[QUESTIONS[0]], "Need two")
+        self.assertEqual(saved[QUESTIONS[1]], "Users two")
+
+    async def test_text_key_alias_conflicts_unknown_and_order_independence(self):
+        data = await self.create_task()
+        qid = str(data["questions"][0]["id"])
+        body = {"answers": {qid: "same", QUESTIONS[0]: "same"}}
+        okay = await self.client.patch(f"/tasks/{data['task']['id']}/answers", json=body)
+        self.assertEqual(okay.status_code, 200, okay.text)
+
+        reversed_body = {"answers": {QUESTIONS[0]: "same", qid: "same"}}
+        reversed_result = await self.client.patch(
+            f"/tasks/{data['task']['id']}/answers", json=reversed_body
+        )
+        self.assertEqual(reversed_result.status_code, 200, reversed_result.text)
+        self.assertEqual(okay.json()["need"], reversed_result.json()["need"])
+        self.assertEqual(
+            json.loads(self.requests[-1].content)["answers"],
+            json.loads(self.requests[-2].content)["answers"],
+        )
+
+        calls_before = len(self.requests)
+        conflict = await self.client.patch(
+            f"/tasks/{data['task']['id']}/answers",
+            json={"answers": {qid: "first", QUESTIONS[0]: "second"}},
+        )
+        unknown = await self.client.patch(
+            f"/tasks/{data['task']['id']}/answers", json={"answers": {"999999": "bad"}}
+        )
+        self.assertEqual(conflict.status_code, 422)
+        self.assertEqual(unknown.status_code, 422)
+        self.assertEqual(len(self.requests), calls_before)
+
+    async def test_success_path_and_safe_ml_fallbacks_and_field_allowlist(self):
+        data = await self.create_task()
+        # A valid seven-field upstream response must be used without fallback.
+        with patch.object(ai_client, "_extract_card", wraps=ai_client._extract_card) as fallback:
+            response = await self.client.patch(
+                f"/tasks/{data['task']['id']}/answers",
+                json={"answers": dict(zip(QUESTIONS, ["Need", "Users", "Success"]))},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            fallback.assert_not_called()
+        self.assertEqual(response.json()["status"], "card_ready")
+
+        await self.client.patch(
+            f"/tasks/{data['task']['id']}", json={"need": "Human edited value", "contact": "owner"}
+        )
+        self.ml_handler = lambda request: (
+            httpx.Response(200, json=QUESTIONS)
+            if request.url.path == "/generate-questions"
+            else httpx.Response(
+                200,
+                json={**CARD, "need": None, "rating_score": 100, "status": "confirmed", "topic": "Injected"},
+            )
+        )
+        response = await self.client.patch(
+            f"/tasks/{data['task']['id']}/answers", json={"answers": {QUESTIONS[1]: "Changed users"}}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["need"], "Human edited value")
+        self.assertEqual(response.json()["contact"], "owner")
+        self.assertEqual(response.json()["status"], "card_ready")
+        self.assertEqual(response.json()["rating_score"], 0)
+        self.assertNotEqual(response.json()["topic"], "Injected")
+
+        for handler in (
+            lambda _: (_ for _ in ()).throw(httpx.ReadTimeout("test timeout")),
+            lambda _: httpx.Response(200, content=b"not-json"),
+            lambda _: httpx.Response(200, json={"unexpected": "shape"}),
+        ):
+            self.ml_handler = lambda request, failure=handler: (
+                httpx.Response(200, json=QUESTIONS)
+                if request.url.path == "/generate-questions"
+                else failure(request)
+            )
+            response = await self.client.patch(
+                f"/tasks/{data['task']['id']}/answers", json={"answers": {QUESTIONS[2]: "Saved result"}}
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["status"], "card_ready")
+
+        self.ml_handler = lambda request: httpx.Response(
+            200, json=["one", "two"] if request.url.path == "/generate-questions" else CARD
+        )
+        fallback_task = await self.create_task(topic=None)
+        self.assertGreaterEqual(len(fallback_task["questions"]), 3)
+
+    async def test_end_to_end_manual_decision_rating_and_validation(self):
+        early = await self.client.post("/tasks/999999/confirm", json={})
+        self.assertEqual(early.status_code, 404)
+        data = await self.create_task(topic="Energy")
+        task_id = data["task"]["id"]
+        premature = await self.client.post(f"/tasks/{task_id}/confirm", json={})
+        self.assertEqual(premature.status_code, 409)
+        answered = await self.client.patch(
+            f"/tasks/{task_id}/answers",
+            json={"answers": ["Need", "Users", "Success"]},
+        )
+        self.assertEqual(answered.status_code, 200, answered.text)
+        edited = await self.client.patch(
+            f"/tasks/{task_id}",
+            json={
+                "context": "Context",
+                "need": "Need",
+                "users": "Users",
+                "data_materials": "Data",
+                "constraints": "Constraints",
+                "expected_result": "Result",
+                "success_criteria": "Success",
+                "contact": "Contact",
+                "interaction_format": "Weekly meeting",
+            },
+        )
+        self.assertEqual(edited.status_code, 200, edited.text)
+        confirmed = await self.client.post(f"/tasks/{task_id}/confirm", json={})
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        self.assertEqual(confirmed.json()["status"], "confirmed")
+        self.assertEqual(confirmed.json()["rating_score"], 100)
+        rating = await self.client.get(f"/tasks/{task_id}/rating")
+        self.assertEqual(rating.status_code, 200)
+        self.assertEqual(rating.json()["score"], 100)
+        self.assertEqual(sum(rating.json()["breakdown"].values()), 100)
+        self.assertEqual(rating.json()["missing_fields"], [])
+
+        rating_edit = await self.client.patch(f"/tasks/{task_id}", json={"data_materials": None})
+        self.assertEqual(rating_edit.status_code, 200, rating_edit.text)
+        self.assertEqual(rating_edit.json()["rating_score"], 80)
+        self.assertEqual(rating_edit.json()["readiness_level"], "ready")
+        self.assertIsNotNone(rating_edit.json()["updated_at"])
+
+        low_data = await self.create_task(topic="Low readiness")
+        low_id = low_data["task"]["id"]
+        await self.client.patch(
+            f"/tasks/{low_id}/answers", json={"answers": ["Need", "Users", "Success"]}
+        )
+        low_confirmed = await self.client.post(f"/tasks/{low_id}/confirm", json={})
+        self.assertEqual(low_confirmed.status_code, 200, low_confirmed.text)
+        self.assertLess(low_confirmed.json()["rating_score"], 80)
+
+        listed = await self.client.get("/tasks?sort=rating")
+        self.assertEqual(listed.status_code, 200)
+        self.assertIn(task_id, [task["id"] for task in listed.json()])
+        sorted_scores = [task["rating_score"] for task in listed.json()]
+        self.assertEqual(sorted_scores, sorted(sorted_scores, reverse=True))
+        self.assertIn(low_id, [task["id"] for task in listed.json()])
+        self.assertEqual((await self.client.get("/tasks?readiness_level=unknown")).status_code, 422)
+        self.assertEqual((await self.client.get("/tasks?sort=score")).status_code, 422)
+        self.assertEqual(
+            (await self.client.patch(f"/tasks/{task_id}/answers", json={"answers": ["late"]})).status_code,
+            409,
+        )
+
+        team_response = await self.client.post("/teams", json={"name": "Team"})
+        self.assertEqual(team_response.status_code, 201, team_response.text)
+        team_id = team_response.json()["id"]
+        missing_team = await self.client.post(
+            f"/tasks/{task_id}/proposals", json={"team_id": 999999, "idea": "Idea"}
+        )
+        self.assertEqual(missing_team.status_code, 404)
+        self.assertEqual(
+            (await self.client.post("/tasks/999999/proposals", json={"team_id": team_id, "idea": "Idea"})).status_code,
+            404,
+        )
+        proposal_response = await self.client.post(
+            f"/tasks/{task_id}/proposals", json={"team_id": team_id, "idea": "Solution", "plan": "Plan"}
+        )
+        self.assertEqual(proposal_response.status_code, 201, proposal_response.text)
+        proposal_id = proposal_response.json()["id"]
+        self.assertEqual(proposal_response.json()["status"], "pending")
+        listed_proposals = await self.client.get(f"/tasks/{task_id}/proposals")
+        self.assertEqual(len(listed_proposals.json()), 1)
+        accepted = await self.client.patch(
+            f"/proposals/{proposal_id}", json={"status": "accepted"}
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(accepted.json()["status"], "accepted")
+        self.assertEqual((await self.client.patch("/proposals/999999", json={"status": "rejected"})).status_code, 404)
+        self.assertEqual(
+            (await self.client.patch(f"/proposals/{proposal_id}", json={"status": "accepted"})).status_code,
+            409,
+        )
+        self.assertEqual((await self.client.get("/teams")).status_code, 200)
+        self.assertEqual((await self.client.get("/tasks/999999/rating")).status_code, 404)
+        self.assertEqual((await self.client.post("/tasks", json={"draft_text": "   "})).status_code, 422)
+        self.assertEqual((await self.client.post("/teams", json={"name": "  "})).status_code, 422)
+        self.assertEqual(
+            (await self.client.post(f"/tasks/{task_id}/proposals", json={"team_id": team_id, "idea": "  "})).status_code,
+            422,
+        )
+
+    async def test_unconfirmed_proposal_and_pending_idempotency(self):
+        data = await self.create_task()
+        team = await self.client.post("/teams", json={"name": "Proposal team"})
+        response = await self.client.post(
+            f"/tasks/{data['task']['id']}/proposals",
+            json={"team_id": team.json()["id"], "idea": "Idea"},
+        )
+        self.assertEqual(response.status_code, 409)
+
+        task_id = data["task"]["id"]
+        await self.client.patch(
+            f"/tasks/{task_id}/answers", json={"answers": ["Need", "Users", "Success"]}
+        )
+        await self.client.post(f"/tasks/{task_id}/confirm", json={})
+        proposal = await self.client.post(
+            f"/tasks/{task_id}/proposals",
+            json={"team_id": team.json()["id"], "idea": "Idea"},
+        )
+        noop = await self.client.patch(
+            f"/proposals/{proposal.json()['id']}", json={"status": "pending"}
+        )
+        self.assertEqual(noop.status_code, 200, noop.text)
+        self.assertEqual(noop.json()["status"], "pending")
+
+
+class RatingUnitTests(unittest.TestCase):
+    def test_rating_boundaries_and_breakdown(self):
+        self.assertEqual([readiness_for_score(score) for score in (0, 39, 40, 69, 70, 89, 90, 100)],
+                         ["draft", "draft", "working", "working", "ready", "ready", "priority", "priority"])
+        task = Task(
+            context="Context", need="Need", data_materials="Data", expected_result="Result",
+            success_criteria="Success", constraints="Constraints", users="Users",
+            contact="Contact", interaction_format="Meeting",
+        )
+        score, breakdown, missing = calculate_rating(task)
+        self.assertEqual(score, 100)
+        self.assertEqual(sum(breakdown.values()), score)
+        self.assertEqual(missing, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

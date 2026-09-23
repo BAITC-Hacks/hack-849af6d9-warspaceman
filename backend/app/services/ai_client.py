@@ -1,5 +1,7 @@
+"""Backend adapter for the ML service, including deterministic outage fallbacks."""
+
+import json
 import logging
-import re
 from typing import Any
 
 import httpx
@@ -7,65 +9,157 @@ import httpx
 from app.core.config import ML_SERVICE_URL
 
 logger = logging.getLogger(__name__)
-CARD_FIELDS = ("title", "context", "need", "users", "data_materials", "constraints", "expected_result",
-               "success_criteria", "contact", "interaction_format", "topic")
+
+NEUTRAL_TOPIC = "Topic not specified"
+UPSTREAM_CARD_FIELDS = (
+    "context",
+    "need",
+    "users",
+    "data_materials",
+    "constraints",
+    "expected_result",
+    "success_criteria",
+)
+GENERATED_CARD_FIELDS = frozenset((*UPSTREAM_CARD_FIELDS, "title"))
+
+_FALLBACK_QUESTIONS = {
+    "What specific need or problem should this task address?": "need",
+    "Who are the intended users or beneficiaries?": "users",
+    "What result would show that the task is successful?": "success_criteria",
+}
 
 
-def _stub_questions(draft_text: str) -> list[str]:
-    questions = [
-        "What specific need or problem should this task address?",
-        "Who are the intended users or beneficiaries?",
-        "What result would show that the task is successful?",
-    ]
-    if not draft_text.strip():
-        return questions
-    return questions
+def _stub_questions(_: str) -> list[str]:
+    return list(_FALLBACK_QUESTIONS)
+
+
+def _new_ml_client(timeout: float) -> httpx.AsyncClient:
+    """Separate factory so tests can mock the actual HTTP transport."""
+    return httpx.AsyncClient(timeout=timeout)
+
+
+def _failure_reason(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout", ""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "upstream_http_error", f" status={exc.response.status_code}"
+    if isinstance(exc, httpx.ConnectError):
+        return "connection_error", ""
+    if isinstance(exc, httpx.RequestError):
+        return "connection_error", ""
+    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError)):
+        return "invalid_response", ""
+    return "invalid_response", ""
+
+
+def _log_failure(operation: str, reason: str, suffix: str = "") -> None:
+    logger.warning("ML %s fallback reason=%s%s", operation, reason, suffix)
+
+
+def _log_exception(operation: str, exc: Exception) -> None:
+    reason, suffix = _failure_reason(exc)
+    _log_failure(operation, reason, suffix)
+
+
+def _valid_question_list(questions: Any) -> bool:
+    return (
+        isinstance(questions, list)
+        and len(questions) >= 3
+        and all(isinstance(question, str) and 0 < len(question.strip()) <= 2_000 for question in questions)
+        and len({question.strip() for question in questions}) == len(questions)
+    )
 
 
 async def get_clarifying_questions(draft_text: str, topic: str | None) -> list[str]:
+    if len(draft_text) > 30_000:
+        _log_failure("generate_questions", "upstream_input_incompatible")
+        return _stub_questions(draft_text)
+    upstream_topic = topic if topic and topic.strip() else NEUTRAL_TOPIC
+    if len(upstream_topic) > 500:
+        _log_failure("generate_questions", "upstream_input_incompatible")
+        return _stub_questions(draft_text)
+
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.post(f"{ML_SERVICE_URL}/generate-questions", json={"draft_text": draft_text, "topic": topic})
+        async with _new_ml_client(timeout=8.0) as client:
+            response = await client.post(
+                f"{ML_SERVICE_URL}/generate-questions",
+                json={"draft_text": draft_text, "topic": upstream_topic},
+            )
             response.raise_for_status()
             data = response.json()
-            questions = data.get("questions", data) if isinstance(data, dict) else data
-            if isinstance(questions, list) and len(questions) >= 3 and all(isinstance(q, str) and q.strip() for q in questions):
-                return [q.strip() for q in questions]
+        questions = data.get("questions", data) if isinstance(data, dict) else data
+        if _valid_question_list(questions):
+            return [question.strip() for question in questions]
+        _log_failure("generate_questions", "invalid_response")
     except Exception as exc:
-        logger.warning("ML question generation failed; using deterministic fallback: %s", exc)
+        _log_exception("generate_questions", exc)
     return _stub_questions(draft_text)
 
 
-def _extract_card(draft_text: str, questions: list[str], answers: list[str] | dict[str, str]) -> dict[str, Any]:
-    answer_values = list(answers.values()) if isinstance(answers, dict) else answers
+def _extract_card(
+    draft_text: str,
+    questions: list[str],
+    answers: dict[str, str],
+) -> dict[str, Any]:
+    """Fallback only maps the backend's exact fixed questions; other answers stay unmapped."""
     text = draft_text.strip()
-    card: dict[str, Any] = {field: None for field in ("title", "context", "need", "users", "data_materials", "constraints", "expected_result", "success_criteria", "contact", "interaction_format")}
+    card: dict[str, Any] = {field: None for field in UPSTREAM_CARD_FIELDS}
     card["context"] = text or None
-    if answer_values:
-        mappings = ["need", "users", "success_criteria", "expected_result", "constraints", "data_materials", "contact", "interaction_format"]
-        for field, answer in zip(mappings, answer_values):
-            if str(answer).strip():
-                card[field] = str(answer).strip()
+    for question in questions:
+        field = _FALLBACK_QUESTIONS.get(question)
+        answer = answers.get(question)
+        if field and answer and answer.strip():
+            card[field] = answer.strip()
     first_line = next((line.strip() for line in text.splitlines() if line.strip()), None)
     card["title"] = first_line[:500] if first_line else None
     return card
 
 
-async def build_card_from_answers(draft_text: str, questions: list[str], answers: list[str] | dict[str, str]) -> dict[str, Any]:
+def _compatible_form_input(draft_text: str, questions: list[str], answers: dict[str, str]) -> bool:
+    return (
+        len(draft_text) <= 30_000
+        and all(isinstance(question, str) and len(question) <= 2_000 for question in questions)
+        and all(
+            isinstance(question, str)
+            and isinstance(answer, str)
+            and len(question) <= 2_000
+            and len(answer) <= 10_000
+            for question, answer in answers.items()
+        )
+    )
+
+
+async def build_card_from_answers(
+    draft_text: str,
+    questions: list[str],
+    answers: dict[str, str],
+) -> dict[str, Any]:
+    fallback = lambda: _extract_card(draft_text, questions, answers)
+    if not _compatible_form_input(draft_text, questions, answers):
+        _log_failure("form_card", "upstream_input_incompatible")
+        return fallback()
+
     payload = {"draft_text": draft_text, "questions": questions, "answers": answers}
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with _new_ml_client(timeout=12.0) as client:
             response = await client.post(f"{ML_SERVICE_URL}/form-card", json=payload)
             response.raise_for_status()
             data = response.json()
-            if isinstance(data, dict) and isinstance(data.get("card", data), dict):
-                card = data.get("card", data)
-                if set(card).intersection(CARD_FIELDS) and all(
-                    field not in card or card[field] is None or isinstance(card[field], str)
-                    for field in CARD_FIELDS
-                ):
-                    return {field: card[field] for field in CARD_FIELDS if field in card}
-                logger.warning("ML card response did not match the task card schema; using deterministic fallback")
+        card = data.get("card", data) if isinstance(data, dict) else None
+        if not isinstance(card, dict):
+            _log_failure("form_card", "invalid_response")
+            return fallback()
+        if not set(card).intersection(UPSTREAM_CARD_FIELDS):
+            _log_failure("form_card", "invalid_response")
+            return fallback()
+        if any(
+            field in card and card[field] is not None and not isinstance(card[field], str)
+            for field in UPSTREAM_CARD_FIELDS
+        ):
+            _log_failure("form_card", "invalid_response")
+            return fallback()
+        # Ignore all fields outside the upstream's seven-field TaskCard schema.
+        return {field: card[field] for field in UPSTREAM_CARD_FIELDS if field in card}
     except Exception as exc:
-        logger.warning("ML card generation failed; using deterministic fallback: %s", exc)
-    return _extract_card(draft_text, questions, answers)
+        _log_exception("form_card", exc)
+        return fallback()

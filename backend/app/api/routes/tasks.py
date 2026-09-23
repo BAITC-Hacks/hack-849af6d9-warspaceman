@@ -3,10 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.db import get_db
+from app.core.db import commit_or_rollback, get_db
 from app.models import ClarifyingQuestion, Task
-from app.schemas import AnswersSubmit, QuestionRead, TaskCreate, TaskRead, TaskUpdate, TaskWithQuestions
-from app.services.ai_client import build_card_from_answers, get_clarifying_questions
+from app.schemas import AnswersSubmit, TaskCreate, TaskRead, TaskUpdate, TaskWithQuestions
+from app.services.ai_client import GENERATED_CARD_FIELDS, build_card_from_answers, get_clarifying_questions
 from app.services.rating import calculate_rating, readiness_for_score
 
 router = APIRouter(tags=["tasks"])
@@ -33,16 +33,57 @@ async def _get_task(task_id: int, db: AsyncSession) -> Task:
     return task
 
 
+def _normalize_answers(questions: list[ClarifyingQuestion], incoming: list[str] | dict[str, str]) -> dict[str, str]:
+    ordered_questions = sorted(questions, key=lambda question: question.order)
+    resolved: dict[int, str] = {}
+    if isinstance(incoming, list):
+        if len(incoming) != len(ordered_questions):
+            raise HTTPException(status_code=422, detail="Provide one answer for each clarification question")
+        resolved = {question.id: answer for question, answer in zip(ordered_questions, incoming)}
+    else:
+        by_id = {str(question.id): question for question in ordered_questions}
+        text_matches: dict[str, list[ClarifyingQuestion]] = {}
+        for question in ordered_questions:
+            text_matches.setdefault(question.question_text, []).append(question)
+        for key, answer in incoming.items():
+            matches: dict[int, ClarifyingQuestion] = {}
+            if key in by_id:
+                question = by_id[key]
+                matches[question.id] = question
+            for question in text_matches.get(key, []):
+                matches[question.id] = question
+            if not matches:
+                raise HTTPException(status_code=422, detail="Answer keys must match a question id or question text")
+            if len(matches) != 1:
+                raise HTTPException(status_code=422, detail="Answer key ambiguously matches multiple questions")
+            question_id = next(iter(matches))
+            previous = resolved.get(question_id)
+            if previous is not None and previous != answer:
+                raise HTTPException(status_code=422, detail="Conflicting answers were provided for the same question")
+            resolved[question_id] = answer
+
+    # Partial submissions update only addressed questions and retain prior answers.
+    complete = {
+        question.id: question.answer_text or ""
+        for question in ordered_questions
+    }
+    complete.update(resolved)
+    return {question.question_text: complete[question.id] for question in ordered_questions}
+
+
 @router.post("/tasks", response_model=TaskWithQuestions, status_code=201)
 async def create_task(payload: TaskCreate, db: AsyncSession = Depends(get_db)):
-    task = Task(context=payload.draft_text, topic=payload.topic, status="clarifying")
-    db.add(task)
-    await db.flush()
+    # Network work happens before the first database write.
     questions = await get_clarifying_questions(payload.draft_text, payload.topic)
-    task.questions = [ClarifyingQuestion(task_id=task.id, question_text=q, order=i) for i, q in enumerate(questions, 1)]
-    await db.commit()
+    task = Task(context=payload.draft_text, topic=payload.topic, status="clarifying", questions=[])
+    db.add(task)
+    task.questions.extend(
+        ClarifyingQuestion(question_text=question_text, order=index)
+        for index, question_text in enumerate(questions, 1)
+    )
+    await commit_or_rollback(db)
     task = await _get_task(task.id, db)
-    return {"task": task, "questions": sorted(task.questions, key=lambda question: question.order)}
+    return {"task": task, "questions": task.questions}
 
 
 @router.patch("/tasks/{task_id}/answers", response_model=TaskRead)
@@ -51,29 +92,22 @@ async def answer_task(task_id: int, payload: AnswersSubmit, db: AsyncSession = D
     if task.status not in {"clarifying", "card_ready"}:
         raise HTTPException(status_code=409, detail="Answers can only be submitted while the task is clarifying or card_ready")
     questions = sorted(task.questions, key=lambda q: q.order)
-    if isinstance(payload.answers, list):
-        if len(payload.answers) != len(questions):
-            raise HTTPException(status_code=422, detail="Provide one answer for each clarification question")
-        answer_values = payload.answers
-        for question, answer in zip(questions, answer_values):
-            question.answer_text = answer
-    else:
-        by_key = {str(q.id): q for q in questions}
-        by_key.update({q.question_text: q for q in questions})
-        unknown = set(payload.answers) - set(by_key)
-        if unknown:
-            raise HTTPException(status_code=422, detail="Answer keys must match a question id or question text")
-        for key, answer in payload.answers.items():
-            by_key[key].answer_text = answer
-    card = await build_card_from_answers(task.context or "", [q.question_text for q in questions], payload.answers)
+    answers_by_text = _normalize_answers(questions, payload.answers)
+    question_texts = [question.question_text for question in questions]
+    card = await build_card_from_answers(task.context or "", question_texts, answers_by_text)
     for field, value in card.items():
-        if (hasattr(task, field) and field not in {"id", "status"}
-                and isinstance(value, str) and value.strip()
-                and not (isinstance(getattr(task, field), str) and getattr(task, field).strip())):
+        if (
+            field in GENERATED_CARD_FIELDS
+            and isinstance(value, str)
+            and value.strip()
+            and not (isinstance(getattr(task, field), str) and getattr(task, field).strip())
+        ):
             setattr(task, field, value)
+    for question in questions:
+        question.answer_text = answers_by_text[question.question_text]
     task.status = "card_ready"
-    await db.commit()
-    return task
+    await commit_or_rollback(db)
+    return await _get_task(task.id, db)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskRead)
@@ -93,8 +127,8 @@ async def update_task(task_id: int, payload: TaskUpdate, db: AsyncSession = Depe
         task.rating_score = score
         task.rating_breakdown = breakdown
         task.readiness_level = readiness_for_score(score)
-    await db.commit()
-    return task
+    await commit_or_rollback(db)
+    return await _get_task(task.id, db)
 
 
 @router.post("/tasks/{task_id}/confirm", response_model=TaskRead)
@@ -102,13 +136,13 @@ async def confirm_task(task_id: int, db: AsyncSession = Depends(get_db)):
     task = await _get_task(task_id, db)
     if task.status != "card_ready" and task.status != "confirmed":
         raise HTTPException(status_code=409, detail="Task must have an editable card before confirmation")
-    score, breakdown, missing = calculate_rating(task)
+    score, breakdown, _ = calculate_rating(task)
     task.rating_score = score
     task.rating_breakdown = breakdown
     task.readiness_level = readiness_for_score(score)
     task.status = "confirmed"
-    await db.commit()
-    return task
+    await commit_or_rollback(db)
+    return await _get_task(task.id, db)
 
 
 @router.get("/tasks/{task_id}/rating")

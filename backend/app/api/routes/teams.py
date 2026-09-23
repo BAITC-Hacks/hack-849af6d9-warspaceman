@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import get_db
+from app.core.db import commit_or_rollback, get_db
 from app.models import Team
 from app.schemas import TeamCreate, TeamRead
 
@@ -13,8 +13,8 @@ router = APIRouter(tags=["teams"])
 async def create_team(payload: TeamCreate, db: AsyncSession = Depends(get_db)):
     team = Team(**payload.model_dump())
     db.add(team)
-    await db.commit()
-    await db.refresh(team)
+    await commit_or_rollback(db)
+    await db.refresh(team, attribute_names=["id", "name", "interests", "skills", "technologies"])
     return team
 
 

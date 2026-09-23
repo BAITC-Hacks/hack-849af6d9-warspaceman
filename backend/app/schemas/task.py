@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TaskFields(BaseModel):
@@ -21,6 +21,13 @@ class TaskFields(BaseModel):
 class TaskCreate(BaseModel):
     draft_text: str = Field(min_length=1)
     topic: str | None = None
+
+    @field_validator("draft_text")
+    @classmethod
+    def draft_text_must_contain_non_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("draft_text cannot be empty")
+        return value
 
 
 class TaskUpdate(TaskFields):

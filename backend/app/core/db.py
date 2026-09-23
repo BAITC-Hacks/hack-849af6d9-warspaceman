@@ -19,6 +19,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def commit_or_rollback(session: AsyncSession) -> None:
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+
 async def init_db() -> None:
     from app.models import ClarifyingQuestion, Proposal, Task, Team  # noqa: F401
 

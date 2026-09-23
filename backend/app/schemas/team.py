@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TeamFields(BaseModel):
@@ -6,6 +6,13 @@ class TeamFields(BaseModel):
     interests: str | None = None
     skills: str | None = None
     technologies: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_must_contain_non_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("name cannot be empty")
+        return value
 
 
 class TeamCreate(TeamFields):
