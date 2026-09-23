@@ -350,6 +350,109 @@ def test_ambiguous_fallback_question_is_not_guessed(monkeypatch):
     assert all(value is None for value in response.json().values())
 
 
+def test_whole_answer_placeholders_stay_unknown_and_trigger_questions(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    drafts = [
+        ("Users: TBD", "Who will use the solution", "users"),
+        ("Пользователи: не знаю", "Кто будет пользоваться решением", "users"),
+        ("Success criteria: not sure", "How will you determine whether the result is successful", "success_criteria"),
+        ("Критерии успеха: уточним позже", "Как вы будете оценивать успешность результата", "success_criteria"),
+    ]
+    for draft, expected_prompt, field in drafts:
+        generated = client.post(
+            "/generate-questions", json={"draft_text": draft, "topic": "Placeholder check"}
+        )
+        questions = generated.json()
+        assert generated.status_code == 200
+        assert len(questions) >= 3
+        assert any(question.startswith(expected_prompt) for question in questions)
+        card = client.post(
+            "/form-card", json={"draft_text": draft, "questions": [], "answers": {}}
+        ).json()
+        assert card[field] is None
+
+
+def test_only_whole_placeholders_are_discarded_and_negative_statements_remain(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    response = client.post(
+        "/form-card",
+        json={
+            "draft_text": (
+                "Constraints: No personal data may be used.\n"
+                "Data: TBD\n"
+                "Need: Budget absent"
+            ),
+            "questions": ["What source data is available?", "Who will use the solution?"],
+            "answers": {
+                "What source data is available?": "Not sure which formats yet; monthly CSV exports are available.",
+                "Who will use the solution?": "not sure",
+            },
+        },
+    )
+    card = response.json()
+    assert response.status_code == 200
+    assert card["constraints"] == "No personal data may be used."
+    assert card["data_materials"] == "Not sure which formats yet; monthly CSV exports are available."
+    assert card["need"] == "Budget absent"
+    assert card["users"] is None
+
+
+def test_ai_question_presence_prompt_hides_only_labelled_whole_placeholders(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class FakeResponses:
+        def parse(self, *, input, **kwargs):
+            draft = input[1]["content"]
+            assert "Users: TBD" not in draft
+            assert "Constraints: No personal data may be used." in draft
+            parsed = main.FieldPresence(**{field: False for field in main.FieldPresence.model_fields})
+            return type("Result", (), {"output_parsed": parsed})()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(main, "OpenAI", FakeClient)
+    assert main._model_supplied_fields(
+        main.GenerateQuestionsRequest(
+            draft_text="Users: TBD\nConstraints: No personal data may be used.", topic="Data"
+        ),
+        "test-key",
+    ) == set()
+
+
+def test_ai_prompt_keeps_placeholder_pair_evidence_but_rejects_placeholder_value(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    question = "Who will use the solution?"
+
+    class FakeResponses:
+        def parse(self, *, input, **kwargs):
+            evidence = json.loads(input[1]["content"])
+            assert evidence["question_answer_pairs"] == [{"question": question, "answer": "not sure"}]
+            assert "whole answer" in input[0]["content"]
+            parsed = main.TaskCard(
+                context=None, need=None, users="not sure", data_materials=None,
+                constraints=None, expected_result=None, success_criteria=None,
+            )
+            return type("Result", (), {"output_parsed": parsed})()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(main, "OpenAI", FakeClient)
+    response = client.post(
+        "/form-card",
+        json={"draft_text": "", "questions": [question], "answers": {question: "not sure"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["users"] is None
+
+
 def test_ai_can_interpret_unknown_question_and_receives_original_pair(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     unfamiliar_question = "Which groups are affected in their day-to-day work?"
