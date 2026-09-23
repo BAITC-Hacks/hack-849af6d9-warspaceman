@@ -1,61 +1,134 @@
-# Business Task Catalog
+# Warspaceman — Business Task Readiness Platform
 
-> **From a vague business request to a clear student-ready challenge.**
+> **Turn a vague business request into a clear, rated, student-ready challenge.**
 
-Hack Alem AI is a hackathon MVP that helps a business turn a short problem description into a structured task card, measure how ready that task is for student teams, publish it to a shared catalog, receive proposals, and manually choose a team.
+Warspaceman is a 5-hour hackathon MVP that helps businesses transform incomplete problem descriptions into structured challenges that student teams can understand and choose. The platform uses AI-assisted clarification, creates an editable task card, calculates a transparent readiness score from 0 to 100, publishes confirmed challenges to a shared catalog, and lets businesses manually review student proposals.
 
----
-
-## What the product does
-
-### For business
-
-1. Write a short description of a real business problem.
-2. Receive clarifying questions.
-3. Get an editable task card.
-4. See a **readiness score from 0 to 100**.
-5. Improve missing fields and recalculate the score.
-6. Publish the task to the catalog.
-7. Review team proposals.
-8. **Accept or reject proposals manually.**
-
-### For student teams
-
-1. Browse published business tasks.
-2. Filter by topic and readiness level.
-3. Open the full task brief.
-4. Create or select a team.
-5. Submit:
-   - solution idea;
-   - implementation plan;
-   - deadline;
-   - prototype link.
-6. Wait for the business decision.
-
-The frontend uses a simple **Business / Student** demo role switch instead of full authentication.
+**Hack Alem AI 2026 · Education Track · 5-hour MVP**
 
 ---
 
-## Why it matters
+## Product Preview
 
-Business tasks are often too vague for students to start working immediately.
+![Task catalog with readiness ratings](docs/screenshots/01-catalog.png)
 
-Typical missing details:
+The catalog contains confirmed business challenges with visible readiness scores. Tasks remain available even when their descriptions are incomplete, allowing students to understand how much clarification may still be required before starting work.
+
+The platform uses four readiness levels:
+
+- **Draft** — 0–39
+- **Working** — 40–69
+- **Ready** — 70–89
+- **Priority** — 90–100
+
+---
+
+## The Problem
+
+Business challenges often begin as short and incomplete descriptions.
+
+A student team may not immediately know:
 
 - who will use the solution;
 - what data or materials are available;
 - what result is expected;
-- what constraints exist;
-- how success will be measured;
+- what constraints apply;
+- how success should be measured;
 - how the team can communicate with the business.
 
-The platform makes these gaps visible and turns task quality into a transparent readiness score.
+This means students spend time clarifying the task before they can actually start solving it.
 
 ---
 
-## Readiness score
+## Our Solution
 
-The backend calculates the score. The frontend only displays the result.
+Warspaceman turns a weak business brief into an actionable challenge through one complete workflow:
+
+```text
+Business need
+     ↓
+AI clarification
+     ↓
+Editable task card
+     ↓
+Readiness score
+     ↓
+Improve missing information
+     ↓
+Publish to catalog
+     ↓
+Student proposal
+     ↓
+Manual business decision
+```
+
+AI assists with clarification and structuring, but the business user always remains in control of the final task.
+
+---
+
+## 1. Start with a Weak Business Brief
+
+![Create business task](docs/screenshots/02-create-task.png)
+
+The business starts by entering a short problem description in ordinary language.
+
+The description does not need to be complete or perfectly structured. A topic can optionally be provided to give the AI additional context.
+
+This keeps the first step simple: describe the actual problem first, then improve the task through clarification.
+
+---
+
+## 2. AI-Assisted Clarification
+
+![AI-generated clarification questions](docs/screenshots/03-ai-questions.png)
+
+The ML service returns **exactly three targeted clarification questions**.
+
+The questions are designed to identify information that is missing from the initial business request and make the challenge more actionable for students.
+
+The ML service supports two modes:
+
+- **OpenAI provider mode** when an API key is configured;
+- **deterministic rule-based fallback** when no provider key is available.
+
+This means the main MVP flow can continue even if the external AI provider is unavailable.
+
+The system does **not** automatically publish AI-generated content. The business reviews and controls the final task.
+
+---
+
+## 3. Human Answers Become Evidence
+
+![Answer clarification questions](docs/screenshots/04-clarification-answers.png)
+
+The business answers the generated questions directly in the interface.
+
+These answers are stored together with their original questions and are used to construct the editable task card.
+
+The AI is not allowed to silently invent business facts. Generated information is based on the user's supplied description and answers, and the result remains editable before publication.
+
+---
+
+## 4. Readiness Scoring and Improvement
+
+![Editable task card and readiness score](docs/screenshots/05-readiness-card.png)
+
+After clarification, the platform creates an editable task card and calculates its readiness.
+
+The interface shows:
+
+- current readiness score;
+- readiness level;
+- score breakdown;
+- missing information;
+- concrete improvement suggestions;
+- editable task fields.
+
+The screenshot above shows a task with a score of **30/100**, clearly indicating which information is still missing.
+
+### Rating Formula
+
+The numeric rating is deterministic backend logic. It is **not generated by the language model**.
 
 | Category | Points |
 |---|---:|
@@ -66,9 +139,9 @@ The backend calculates the score. The frontend only displays the result.
 | Constraints | 10 |
 | Users | 10 |
 | Contact + interaction format | 10 |
-| **Maximum** | **100** |
+| **Total** | **100** |
 
-Readiness levels:
+### Readiness Levels
 
 | Score | Level |
 |---:|---|
@@ -77,7 +150,98 @@ Readiness levels:
 | 70–89 | Ready |
 | 90–100 | Priority |
 
-A low score **does not hide a confirmed task**. It only shows how much clarification is still needed.
+A low rating does not hide a confirmed challenge. It communicates how prepared the task currently is and what should be improved.
+
+---
+
+## 5. Task Quality Becomes Visible in the Catalog
+
+![Catalog with multiple readiness levels](docs/screenshots/06-catalog-result.png)
+
+The catalog can contain challenges at different preparation levels.
+
+For example:
+
+```text
+20/100  → Draft
+55/100  → Working
+70/100  → Ready
+90/100  → Priority
+100/100 → Priority
+```
+
+This is the central gamification mechanic of the project:
+
+```text
+More useful task information
+          ↓
+Higher readiness score
+          ↓
+Clearer challenge for students
+```
+
+The score evaluates the **quality and completeness of the task**, not the popularity or reputation of the company that submitted it.
+
+---
+
+## Student Choice
+
+Student teams can browse published challenges and decide for themselves which task they want to work on.
+
+They can:
+
+- browse the complete catalog;
+- filter by topic;
+- filter by readiness level;
+- sort by readiness score;
+- inspect the complete task brief;
+- create or select a team;
+- submit a proposal.
+
+A proposal can contain:
+
+- solution idea;
+- implementation plan;
+- deadline;
+- prototype link.
+
+The platform does **not** automatically assign teams to businesses.
+
+---
+
+## Business Decision
+
+After proposals are submitted, the business can review them manually.
+
+For each proposal, the business can:
+
+- **Accept**
+- **Reject**
+
+The final decision always remains with the business representative.
+
+AI never automatically chooses the winning team.
+
+---
+
+## End-to-End MVP
+
+The implemented workflow is:
+
+```text
+Draft
+→ 3 clarification questions
+→ Answers
+→ Editable task card
+→ Readiness score
+→ Improvement
+→ Publication
+→ Catalog
+→ Student proposal
+→ Manual business decision
+```
+
+This flow was exercised through the running Docker application rather than simulated with presentation slides.
 
 ---
 
@@ -85,103 +249,26 @@ A low score **does not hide a confirmed task**. It only shows how much clarifica
 
 ```text
 Browser
-  │
-  │  HTTP / JSON
-  ▼
-Frontend — React + Vite + Nginx
-  │
-  │  /api/*
-  ▼
-Backend — FastAPI + SQLAlchemy + SQLite
-  │
-  │  HTTP / JSON
-  ▼
-ML service — FastAPI
-  │
-  ├─ OpenAI API when configured
-  └─ rule-based fallback without a key
+   │
+   ▼
+React + Vite
+Nginx
+   │
+   │ /api
+   ▼
+FastAPI Backend
+   │
+   ├── SQLAlchemy
+   ├── SQLite
+   ├── Deterministic Rating Service
+   │
+   └──── HTTP ────► FastAPI ML Service
+                         │
+                         ├── OpenAI provider mode
+                         └── Rule-based fallback
 ```
 
-### Repository structure
-
-```text
-.
-├── frontend/             React/Vite UI
-├── backend/              FastAPI API, rating, DB, proposals
-├── ML/                   clarification + card extraction service
-├── docs/
-│   └── API_CONTRACT.md   source of truth for API shapes
-├── docker-compose.yml
-└── README.md
-```
-
----
-
-## Tech stack
-
-### Frontend
-- React
-- Vite
-- JavaScript
-- CSS
-- Fetch API
-- Nginx in Docker
-
-### Backend
-- Python
-- FastAPI
-- SQLAlchemy
-- SQLite
-- aiosqlite
-- Pydantic
-- HTTPX
-
-### ML / AI
-- Python
-- FastAPI
-- OpenAI API support
-- structured output
-- rule-based fallback when no API key is configured
-
----
-
-# Quick start with Docker
-
-This is the easiest way to run the whole project.
-
-### Requirements
-
-- Docker Desktop
-- Git
-
-### 1. Clone the repository
-
-```powershell
-git clone https://github.com/BAITC-Hacks/hack-849af6d9-warspaceman.git
-cd hack-849af6d9-warspaceman
-```
-
-### 2. Start Docker Desktop
-
-Wait until Docker is fully running.
-
-### 3. Build and start the project
-
-```powershell
-docker compose up --build -d
-```
-
-### 4. Open the app
-
-**http://localhost:8080**
-
-### 5. Check container status
-
-```powershell
-docker compose ps
-```
-
-Expected services:
+Docker Compose runs three application services:
 
 ```text
 frontend
@@ -189,43 +276,92 @@ backend
 ml
 ```
 
-### 6. View logs
+The backend stores data in SQLite using a persistent Docker volume.
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| Frontend | React, Vite, JavaScript, CSS, Nginx |
+| Backend | Python, FastAPI, SQLAlchemy, SQLite, Pydantic, HTTPX |
+| AI / ML | Python, FastAPI, OpenAI structured output, deterministic fallback |
+| Infrastructure | Docker, Docker Compose |
+
+---
+
+# Run the Full MVP
+
+The easiest way to run the complete project is Docker Compose.
+
+### Requirements
+
+- Git
+- Docker Desktop
+
+### Clone
 
 ```powershell
-docker compose logs -f
+git clone https://github.com/BAITC-Hacks/hack-849af6d9-warspaceman.git
+cd hack-849af6d9-warspaceman
 ```
 
-Or per service:
+### Start
 
 ```powershell
-docker compose logs -f frontend
-docker compose logs -f backend
-docker compose logs -f ml
+docker compose up --build -d
 ```
 
-### 7. Stop the project
+Open:
+
+```text
+http://localhost:8080
+```
+
+### Check Services
+
+```powershell
+docker compose ps
+```
+
+Expected application services:
+
+```text
+frontend
+backend
+ml
+```
+
+### View Logs
+
+```powershell
+docker compose logs -f frontend backend ml
+```
+
+### Stop
 
 ```powershell
 docker compose down
 ```
 
-The SQLite demo database is stored in a Docker volume and survives a normal `docker compose down`.
+The SQLite database is stored in a persistent Docker volume and survives a normal shutdown.
 
-> Do not use `docker compose down -v` unless you intentionally want to delete demo data.
+> Do not run `docker compose down -v` unless you intentionally want to delete the persistent demo database.
 
 ---
 
-## OpenAI API key — optional
+## Optional OpenAI Mode
 
-The project can run **without an OpenAI API key** using the local rule-based fallback.
+The MVP can run without an OpenAI API key using the deterministic ML fallback.
 
-To enable the provider-backed AI path, copy the example environment file:
+To enable provider-backed AI generation, copy the example environment file:
 
 ```powershell
 Copy-Item .env.example .env.local
 ```
 
-Then edit `.env.local`:
+Then configure your local values:
 
 ```env
 FRONTEND_PORT=8080
@@ -233,75 +369,122 @@ OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-Start with:
+Launch using:
 
 ```powershell
 docker compose --env-file .env.local up --build -d
 ```
 
-Do not commit real API keys.
+Never commit real API keys.
 
 ---
 
-# How the jury can verify the solution
+# Verification
 
-The complete MVP can be checked in one end-to-end scenario.
+## Backend Regression Tests
 
-## 1. Business creates a task
+The backend regression suite was executed inside the Docker Linux environment:
 
-Switch to **Business** and click **Create task**.
-
-Example:
-
-```text
-We need a service that helps employees prepare monthly reports faster.
+```powershell
+docker compose run --rm --no-deps backend python -m unittest discover -s tests -v
 ```
 
-Optional topic:
+Verified result:
 
 ```text
-Reporting
+Ran 10 tests
+OK
 ```
 
-Submit the draft.
+The suite covers:
+
+- complete task lifecycle;
+- clarification answer normalization;
+- rating boundaries and breakdown;
+- invalid state transitions;
+- proposal creation and decisions;
+- ML failure fallback;
+- demo dataset behavior;
+- demo-admin access protection.
 
 ---
 
-## 2. Answer clarification questions
+## Live Integration
 
-The system returns targeted questions about missing information.
+The complete browser flow produced successful backend requests for:
 
-Answer them and continue to the editable task card.
+```text
+POST  /tasks
+PATCH /tasks/{id}/answers
+GET   /tasks/{id}/rating
+PATCH /tasks/{id}
+POST  /tasks/{id}/confirm
+GET   /tasks
 
----
+POST  /teams
 
-## 3. Review the task card and rating
+POST  /tasks/{id}/proposals
+GET   /tasks/{id}/proposals
+PATCH /proposals/{id}
+```
 
-The task card contains fields such as:
+The running ML service also successfully handled:
 
-- title;
-- context;
-- business need;
-- users;
-- data and materials;
-- constraints;
-- expected result;
-- success criteria;
-- contact;
-- interaction format;
-- topic.
+```text
+POST /generate-questions
+POST /form-card
+```
 
-The UI also shows:
+This confirms service-to-service integration in the running MVP.
 
-- readiness score;
-- readiness level;
-- score breakdown;
-- missing fields;
-- improvement suggestions.
+It is not intended as a comprehensive benchmark of AI model quality.
 
 ---
 
-## 4. Demonstrate rating growth
+## Demo Data
+
+For local testing, the project includes private demo tooling that can populate the application with synthetic data.
+
+The demo catalog contains examples at several readiness levels:
+
+```text
+20  → Draft
+55  → Working
+70  → Ready
+80  → Ready
+90  → Priority
+100 → Priority
+```
+
+This makes it possible to demonstrate catalog ordering and the readiness gamification mechanic without using real business data.
+
+---
+
+# 5-Minute Jury Demo
+
+A complete demo can be shown in one prepared scenario.
+
+### 1. Show the Catalog
+
+Show business challenges with different readiness levels.
+
+### 2. Switch to Business
+
+Create a deliberately weak task description.
+
+### 3. Generate Clarification Questions
+
+Show the three AI-assisted questions.
+
+### 4. Answer the Questions
+
+Provide missing details.
+
+### 5. Review the Editable Card
+
+Show the initial readiness score and missing fields.
+
+### 6. Improve the Task
 
 Add missing information and press:
 
@@ -309,230 +492,78 @@ Add missing information and press:
 Save & recalculate
 ```
 
-The backend recalculates the score.
+Show the score increasing.
 
-This demonstrates the core gamification mechanic:
+### 7. Publish
+
+Publish the challenge to the common catalog.
+
+### 8. Switch to Student
+
+Open the challenge.
+
+Create or select a team and submit a proposal.
+
+### 9. Switch Back to Business
+
+Review the proposal.
+
+### 10. Make the Decision
+
+Accept or reject the proposal manually.
+
+This demonstrates the entire task-to-team workflow inside the working MVP.
+
+---
+
+## API Contract
+
+The service interface is documented in:
+
+[docs/API_CONTRACT.md](docs/API_CONTRACT.md)
+
+This file is the source of truth for endpoint paths and request/response formats.
+
+---
+
+## Repository Structure
 
 ```text
-weak task
-   ↓
-clarification
-   ↓
-better task
-   ↓
-higher readiness score
+.
+├── frontend/             React/Vite application
+├── backend/              FastAPI API, database, rating and proposals
+├── ML/                   clarification and task-card AI service
+├── docs/
+│   ├── API_CONTRACT.md
+│   └── screenshots/
+├── docker-compose.yml
+└── README.md
 ```
 
 ---
 
-## 5. Publish the task
+## MVP Scope
 
-Press:
+The following functionality was intentionally excluded from the 5-hour MVP:
 
-```text
-Publish task
-```
-
-The confirmed task appears in the catalog.
-
-The catalog supports:
-
-- topic filtering;
-- readiness filtering;
-- rating sorting.
-
----
-
-## 6. Student submits a proposal
-
-Switch to **Student**.
-
-Open the published task.
-
-Create or select a team and submit:
-
-- idea;
-- plan;
-- deadline;
-- prototype link.
-
----
-
-## 7. Business makes the decision
-
-Switch back to **Business** on the same task.
-
-The proposal list is shown with team names and status.
-
-The business can manually:
-
-```text
-Accept proposal
-Reject
-```
-
-There is **no automatic team assignment**.
-
----
-
-## Demo flow in one line
-
-```text
-Draft
-→ Clarification
-→ Editable Card
-→ Readiness Score
-→ Improvement
-→ Publish
-→ Catalog
-→ Team Proposal
-→ Business Decision
-```
-
----
-
-## Main backend API
-
-### Tasks
-
-```text
-POST  /tasks
-PATCH /tasks/{id}/answers
-PATCH /tasks/{id}
-POST  /tasks/{id}/confirm
-GET   /tasks/{id}/rating
-GET   /tasks
-```
-
-### Teams
-
-```text
-POST /teams
-GET  /teams
-```
-
-### Proposals
-
-```text
-POST  /tasks/{id}/proposals
-GET   /tasks/{id}/proposals
-PATCH /proposals/{id}
-```
-
-Full request and response shapes are documented in:
-
-**[docs/API_CONTRACT.md](docs/API_CONTRACT.md)**
-
----
-
-# Local development without Docker
-
-Use three terminals.
-
-## Backend
-
-```powershell
-cd backend
-python -m pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-Backend:
-
-**http://localhost:8000**
-
-Swagger:
-
-**http://localhost:8000/docs**
-
----
-
-## ML service
-
-```powershell
-cd ML
-python -m pip install -r requirements-dev.txt
-uvicorn service.main:app --reload --port 8001
-```
-
-Health endpoint:
-
-**http://localhost:8001/health**
-
----
-
-## Frontend
-
-```powershell
-cd frontend
-npm ci
-npm run dev
-```
-
-Frontend:
-
-**http://localhost:5173**
-
-The frontend API client supports `VITE_API_BASE_URL` for explicit local API configuration. In Docker, the frontend uses `/api` through Nginx.
-
----
-
-## Useful Docker commands
-
-Rebuild everything:
-
-```powershell
-docker compose up --build -d
-```
-
-Rebuild only frontend:
-
-```powershell
-docker compose up --build -d frontend
-```
-
-Check running services:
-
-```powershell
-docker compose ps
-```
-
-Tail logs:
-
-```powershell
-docker compose logs -f frontend backend ml
-```
-
-Stop:
-
-```powershell
-docker compose down
-```
-
----
-
-## MVP scope
-
-Intentionally not included:
-
-- full registration and password recovery;
-- complex role management;
-- chat;
+- production authentication;
+- password recovery;
+- realtime chat;
 - notifications;
-- calendar;
 - file storage;
 - payment;
 - automatic team assignment;
-- full project tracking.
+- full project management;
+- production deployment infrastructure.
 
-The goal is to demonstrate one reliable end-to-end workflow from a raw business need to a real student proposal and a manual business decision.
+The scope was deliberately limited to delivering a reliable end-to-end workflow from a raw business need to a student proposal and a manual business decision.
 
 ---
 
-## API contract
+## Core Principle
 
-The API contract between services is maintained in:
+The platform does not rank companies.
 
-**[docs/API_CONTRACT.md](docs/API_CONTRACT.md)**
+It measures how ready a **specific business task** is for students to work on.
 
-It is the source of truth for endpoint paths and request/response structures.
+The better the task is described, the clearer it becomes for student teams — and the higher its readiness score.
