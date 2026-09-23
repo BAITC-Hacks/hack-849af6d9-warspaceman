@@ -22,7 +22,9 @@ nav {
   background: #ffffff;
   border-bottom: 1px solid #dce3ef;
 }
-nav span { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.nav-links, .role-switch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.role-switch { margin-left: auto; padding-left: 12px; border-left: 1px solid #dce3ef; }
+.role-switch > span { font-weight: 700; color: #59657a; }
 
 h1 { margin: 0 0 20px; font-size: clamp(1.7rem, 4vw, 2.4rem); }
 h2 { margin-top: 28px; }
@@ -40,6 +42,7 @@ form {
   border-radius: 12px;
 }
 label { display: grid; gap: 7px; font-weight: 650; }
+.field-label { margin-bottom: 14px; }
 input, textarea, select {
   width: 100%;
   padding: 10px 12px;
@@ -100,6 +103,9 @@ nav button[aria-pressed="true"] { color: #ffffff; background: #315fd4; border-co
 .suggestions ul { margin: 0; padding-left: 20px; }
 .task-actions { margin-top: 18px; }
 .proposal-team { font-weight: 750; color: #315fd4; }
+.team-creation { max-width: 760px; margin-top: 24px; padding: 20px; background: #f8faff; border: 1px solid #dce3ef; border-radius: 12px; }
+.team-creation > h3 { color: #26344e; font-size: 1rem; }
+.team-creation > form { padding: 0; background: transparent; border: 0; }
 
 .status-badge {
   display: inline-block;
@@ -123,6 +129,6 @@ nav button[aria-pressed="true"] { color: #ffffff; background: #315fd4; border-co
 [role="status"] { color: #16603d; background: #dff6e9; border: 1px solid #b8e7cc; }
 
 @media (max-width: 620px) {
-  nav span { width: 100%; margin-left: 0; }
+  .role-switch { width: 100%; margin-left: 0; padding: 12px 0 0; border-left: 0; border-top: 1px solid #dce3ef; }
   .filter-row { align-items: stretch; flex-direction: column; }
 }
