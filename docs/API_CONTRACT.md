@@ -1,0 +1,77 @@
+# API contract
+
+All JSON responses use the fields shown below. `status` is one of `draft`, `clarifying`, `card_ready`, `confirmed`; proposal status is `pending`, `accepted`, or `rejected`.
+
+## Tasks
+
+### `POST /tasks`
+
+Request: `{ "draft_text": "string", "topic": "string|null" }`
+
+Response `201`: `{ "task": Task, "questions": [Question] }`. The task is created in `clarifying` status and at least three questions are returned.
+
+### `PATCH /tasks/{id}/answers`
+
+Request: `{ "answers": ["answer"] }` or `{ "answers": { "question key": "answer" } }`
+
+Response: `Task` with the generated editable card and `card_ready` status.
+
+### `PATCH /tasks/{id}`
+
+Request: any subset of card fields (`title`, `context`, `need`, `users`, `data_materials`, `constraints`, `expected_result`, `success_criteria`, `contact`, `interaction_format`, `topic`) and optionally `status`.
+
+Response: `Task`.
+
+### `POST /tasks/{id}/confirm`
+
+Request: `{}`
+
+Response: `Task` with recalculated `rating_score`, `rating_breakdown`, `readiness_level`, and `confirmed` status.
+
+### `GET /tasks/{id}/rating`
+
+Response: `{ "score": 0, "breakdown": { "context+need": 0, "data_materials": 0, "expected_result": 0, "success_criteria": 0, "constraints": 0, "users": 0, "contact+interaction_format": 0 }, "missing_fields": ["context"] }`
+
+### `GET /tasks`
+
+Query parameters: optional `topic`, `readiness_level`, and `sort=rating`.
+
+Response: `[Task]` containing confirmed catalog tasks.
+
+`Task`: `{ "id": 1, "title": "string|null", "context": "string|null", "need": "string|null", "users": "string|null", "data_materials": "string|null", "constraints": "string|null", "expected_result": "string|null", "success_criteria": "string|null", "contact": "string|null", "interaction_format": "string|null", "topic": "string|null", "status": "confirmed", "rating_score": 0, "rating_breakdown": {}, "readiness_level": "draft", "created_at": "datetime|null", "updated_at": "datetime|null" }`
+
+`Question`: `{ "id": 1, "task_id": 1, "question_text": "string", "answer_text": "string|null", "order": 1 }`
+
+## Proposals
+
+### `POST /tasks/{id}/proposals`
+
+Request: `{ "team_id": 1, "idea": "string", "plan": "string|null", "deadline": "string|null", "link": "string|null" }`
+
+Response `201`: `Proposal` with `pending` status.
+
+### `GET /tasks/{id}/proposals`
+
+Response: `[Proposal]`.
+
+### `PATCH /proposals/{id}`
+
+Request: `{ "status": "pending|accepted|rejected" }`
+
+Response: `Proposal`. This endpoint only changes a manually supplied status and never assigns a team automatically.
+
+`Proposal`: `{ "id": 1, "task_id": 1, "team_id": 1, "idea": "string", "plan": "string|null", "deadline": "string|null", "link": "string|null", "status": "pending", "created_at": "datetime|null" }`
+
+## Teams
+
+### `POST /teams`
+
+Request: `{ "name": "string", "interests": "string|null", "skills": "string|null", "technologies": "string|null" }`
+
+Response `201`: `Team`.
+
+### `GET /teams`
+
+Response: `[Team]`.
+
+`Team`: `{ "id": 1, "name": "string", "interests": "string|null", "skills": "string|null", "technologies": "string|null" }`
