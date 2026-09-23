@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from service import main
@@ -27,6 +30,33 @@ def test_questions_are_three_distinct_and_follow_russian_input(monkeypatch):
     assert len(set(questions)) == len(questions)
     assert all(any("а" <= ch.lower() <= "я" for ch in question) for question in questions)
     assert response.headers["X-Generation-Mode"] == "rule-based-stub"
+
+
+def test_five_synthetic_demo_drafts_have_varying_completeness(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    demo_path = Path(__file__).parents[1] / "examples" / "demo_drafts.json"
+    drafts = json.loads(demo_path.read_text(encoding="utf-8"))["drafts"]
+    completeness = {len(main._explicit_fields(draft["draft_text"])) for draft in drafts}
+
+    assert len(drafts) == 5
+    assert len(completeness) >= 3
+    for draft in drafts:
+        questions_response = client.post(
+            "/generate-questions",
+            json={"draft_text": draft["draft_text"], "topic": draft["topic"]},
+        )
+        assert questions_response.status_code == 200
+        questions = questions_response.json()
+        card_response = client.post(
+            "/form-card",
+            json={
+                "draft_text": draft["draft_text"],
+                "questions": questions,
+                "answers": draft["answers"],
+            },
+        )
+        assert card_response.status_code == 200
+        assert set(card_response.json()) == CARD_FIELDS
 
 
 def test_explicitly_complete_draft_still_gets_three_distinct_questions(monkeypatch):
@@ -79,12 +109,19 @@ def test_rule_based_fallback_maps_russian_answer_by_question(monkeypatch):
         "/form-card",
         json={
             "draft_text": "",
-            "questions": ["Кто будет пользоваться решением?"],
-            "answers": {"Кто будет пользоваться решением?": "Учителя и родители."},
+            "questions": [
+                "Кто будет пользоваться решением?",
+                "Как вы будете оценивать успешность результата?",
+            ],
+            "answers": {
+                "Кто будет пользоваться решением?": "Учителя и родители.",
+                "Как вы будете оценивать успешность результата?": "Участники завершат пилот.",
+            },
         },
     )
     assert response.status_code == 200
     assert response.json()["users"] == "Учителя и родители."
+    assert response.json()["success_criteria"] == "Участники завершат пилот."
     assert response.json()["need"] is None
 
 
@@ -103,6 +140,7 @@ def test_ai_maps_answers_to_their_question_field_and_filters_inventions(monkeypa
         def parse(self, *, input, **kwargs):
             assert "'answers_by_field'" in input[1]["content"]
             assert "Finance analysts" in input[1]["content"]
+            assert "untrusted data" in input[0]["content"]
             card = main.TaskCard(
                 context=None,
                 need="Create a tool.",
@@ -141,12 +179,13 @@ def test_provider_failure_returns_controlled_error(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     def provider_failure(*args, **kwargs):
-        raise RuntimeError("provider unavailable")
+        raise RuntimeError("test-key provider unavailable")
 
     monkeypatch.setattr(main, "_model_card", provider_failure)
     response = client.post("/form-card", json={"draft_text": "", "questions": [], "answers": {}})
     assert response.status_code == 502
     assert response.json() == {"detail": "Task card generation failed."}
+    assert "test-key" not in response.text
 
 
 def test_malformed_ai_response_returns_controlled_error(monkeypatch):

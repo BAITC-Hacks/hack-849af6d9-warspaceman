@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-The service works without an API key using its labelled rule-based fallback. To enable AI extraction, set `OPENAI_API_KEY`. You can optionally set `OPENAI_MODEL`; the default is `gpt-4o-mini`.
+The service works without an API key using its labelled rule-based fallback. To enable AI extraction, set `OPENAI_API_KEY` in your shell environment or environment manager; never put a real key in a repository file. Leave it unset to use the fallback. You can optionally set `OPENAI_MODEL`; the default is `gpt-4o-mini`. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
 
 ## Launch
 
@@ -35,6 +35,14 @@ python -m pytest
 The tests use a mocked provider and do not make paid API calls.
 
 ## Demo requests
+
+Five synthetic examples with different levels of completeness are in `examples/demo_drafts.json`. With the service running, call both endpoints for all five examples with:
+
+```sh
+python examples/run_demos.py
+```
+
+The demo script sends each draft to `/generate-questions`, then submits the generated questions and its sample answers to `/form-card`. It prints each question list, card, and generation mode.
 
 Generate questions:
 
