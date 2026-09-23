@@ -1,6 +1,7 @@
 # API contract
 
 All JSON responses use the fields shown below. `status` is one of `draft`, `clarifying`, `card_ready`, `confirmed`; proposal status is `pending`, `accepted`, or `rejected`.
+`readiness_level` is one of `draft` (0–39), `working` (40–69), `ready` (70–89), or `priority` (90–100).
 
 ## Tasks
 

@@ -38,10 +38,10 @@ async def update_proposal(proposal_id: int, payload: ProposalUpdate, db: AsyncSe
     proposal = await db.get(Proposal, proposal_id)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    if proposal.status == "pending" and payload.status == "pending":
+        return proposal
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail="Only pending proposals can be decided")
-    if payload.status == "pending":
-        raise HTTPException(status_code=422, detail="Decision must be accepted or rejected")
     proposal.status = payload.status
     await db.commit()
     await db.refresh(proposal)

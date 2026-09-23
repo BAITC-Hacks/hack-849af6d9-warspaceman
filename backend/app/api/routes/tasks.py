@@ -42,7 +42,7 @@ async def create_task(payload: TaskCreate, db: AsyncSession = Depends(get_db)):
     task.questions = [ClarifyingQuestion(task_id=task.id, question_text=q, order=i) for i, q in enumerate(questions, 1)]
     await db.commit()
     task = await _get_task(task.id, db)
-    return {"task": task, "questions": task.questions}
+    return {"task": task, "questions": sorted(task.questions, key=lambda question: question.order)}
 
 
 @router.patch("/tasks/{task_id}/answers", response_model=TaskRead)
@@ -65,10 +65,11 @@ async def answer_task(task_id: int, payload: AnswersSubmit, db: AsyncSession = D
             raise HTTPException(status_code=422, detail="Answer keys must match a question id or question text")
         for key, answer in payload.answers.items():
             by_key[key].answer_text = answer
-        answer_values = {q.question_text: q.answer_text or "" for q in questions if q.answer_text is not None}
     card = await build_card_from_answers(task.context or "", [q.question_text for q in questions], payload.answers)
     for field, value in card.items():
-        if hasattr(task, field) and field not in {"id", "status"}:
+        if (hasattr(task, field) and field not in {"id", "status"}
+                and isinstance(value, str) and value.strip()
+                and not (isinstance(getattr(task, field), str) and getattr(task, field).strip())):
             setattr(task, field, value)
     task.status = "card_ready"
     await db.commit()
