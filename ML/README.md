@@ -1,6 +1,6 @@
 # ML service
 
-This FastAPI service generates clarifying questions and forms a task card. It supports English and Russian prompts and answers. Card values must be grounded in the draft or submitted answers; unknown fields are `null`. The AI path receives the original question-answer pairs so it can interpret unfamiliar wording. Its text check confirms a returned value appears in submitted evidence, but that check alone cannot prove the value was assigned to the semantically correct field.
+This FastAPI service generates exactly three clarifying questions and forms a task card. With a configured OpenAI key, it reads ordinary English or Russian prose and returns validated questions internally paired with their target card fields; the public response remains a list of strings. Card values must be grounded in the draft or submitted answers; unknown fields are `null`. The AI path receives the original question-answer pairs so it can interpret generated or unfamiliar wording. Its text check confirms a returned value appears in submitted evidence, but that check alone cannot prove the value was assigned to the semantically correct field.
 
 ## Setup
 
@@ -12,9 +12,9 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-Put the OpenAI key in `ML/.env` as `OPENAI_API_KEY=...`; this is the only file you need to edit. The local `.env` initially contains a nonfunctional placeholder, which deliberately selects the rule-based fallback. `ML/.env` is ignored by Git. `.env.example` contains placeholders only. The service reads `.env` relative to `service/main.py`, regardless of the current directory. Existing shell environment variables take precedence over `.env`; clear a shell `OPENAI_API_KEY` override if you want the file value to take effect. `OPENAI_MODEL` is also read there and defaults to `gpt-4o-mini`.
+Put the OpenAI key in `ML/.env` as `OPENAI_API_KEY=...`; this is the only file you need to edit. The local `.env` initially contains a nonfunctional placeholder, which deliberately selects the rule-based fallback. `ML/.env` is ignored by Git. `.env.example` contains placeholders only. The service reads `.env` relative to `service/main.py`, regardless of the current directory. Existing shell environment variables take precedence over `.env`; clear a shell `OPENAI_API_KEY` override if you want the file value to take effect. `OPENAI_MODEL` is also read there and defaults to `gpt-4o-mini`. An empty value or a value that is not an OpenAI `sk-` key selects the fallback; provider errors for a configured key return controlled HTTP errors instead of switching modes.
 
-The service works without a configured API key using its labelled rule-based fallback. That fallback recognizes explicitly labelled fields, the service's generated question templates, and unambiguous question wording; unfamiliar or ambiguous answer questions are left unmapped. Whole-answer placeholders such as `TBD`, `not sure`, `не знаю`, `пока неизвестно`, and `уточним позже` count as unknown. This is deliberately conservative: a substantive answer containing one of those phrases is retained, and meaningful negatives such as “No personal data may be used” remain data. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
+The service works without a configured API key using its labelled rule-based fallback. That fallback recognizes explicitly labelled fields, the service's generated question templates, and unambiguous question wording; unfamiliar or ambiguous answer questions are left unmapped. It returns exactly three distinct questions, prioritizing labelled fields that are missing or contain placeholders. Whole-answer placeholders such as `TBD`, `not sure`, `не знаю`, `пока неизвестно`, and `уточним позже` count as unknown. This is deliberately conservative: a substantive answer containing one of those phrases is retained, and meaningful negatives such as “No personal data may be used” remain data. Answers in `/form-card` must be keyed by their exact question text.
 
 ## Launch
 
@@ -44,15 +44,15 @@ python evaluation/run_evaluation.py
 
 The offline evaluator loads 13 synthetic cases from `evaluation/cases.json`, exercises `/generate-questions` and then `/form-card` in-process, reports exact field matches, missing expected values, and unexpectedly populated fields, and exits nonzero on failures. It clears the API key for these calls and does not contact a provider. Its results measure the rule-based fallback only.
 
-## Optional live smoke test
+## Optional live evaluation
 
-With the local service running and a real key configured, run:
+With the local service running and a real key configured, run from `ML/`:
 
 ```sh
 python scripts/live_smoke_test.py
 ```
 
-This sends one synthetic draft through both endpoints and reports response schema validity, generation modes, and evidence/mapping checks. It makes OpenAI requests and incurs API usage. A passing smoke test checks only that sample; it does not prove general extraction accuracy. The script refuses to run if the key is absent or is still the placeholder. It is optional and is not part of the offline test suite.
+This sends the three English and Russian synthetic cases in `evaluation/live_cases.json` through both endpoints and reports question/card schema validity, generation modes, evidence checks, and expected answer mapping. It makes OpenAI requests and incurs API usage. A passing run checks only these examples; it does not prove general extraction accuracy. The script refuses to run if the key is absent or still a placeholder. It is optional and is not part of the offline test suite; no live calls were made during implementation or offline testing.
 
 ## Demo requests
 
@@ -90,18 +90,18 @@ Start with a weak draft and topic:
 {"draft_text":"Нужен сервис для записи к школьному психологу. Пользователи: пока неизвестно.","topic":"Запись к школьному психологу"}
 ```
 
-`POST /generate-questions` asks in Russian about missing details, including users because `пока неизвестно` is a placeholder. Suppose the returned list contains `Кто будет пользоваться решением для темы «Запись к школьному психологу»?`, `Какие данные или материалы и в каких форматах будут доступны для темы «Запись к школьному психологу»?`, and `Какой конкретный результат или готовый материал нужно подготовить для темы «Запись к школьному психологу»?`. Submit the exact returned strings as keys and only include facts the user supplied:
+With the no-key fallback, `POST /generate-questions` asks in Russian about missing details, including users because `пока неизвестно` is a placeholder. It returns three prompts such as `Кто будет пользоваться решением для темы «Запись к школьному психологу»?`, `Какие данные или материалы и в каких форматах будут доступны для темы «Запись к школьному психологу»?`, and `Как вы будете оценивать успешность результата по измеримым показателям или целевому значению для темы «Запись к школьному психологу»?`. Submit the exact returned strings as keys and only include facts the user supplied:
 
 ```json
 {
   "draft_text":"Нужен сервис для записи к школьному психологу. Пользователи: пока неизвестно.",
-  "questions":["Кто будет пользоваться решением для темы «Запись к школьному психологу»?","Какие данные или материалы и в каких форматах будут доступны для темы «Запись к школьному психологу»?","Какой конкретный результат или готовый материал нужно подготовить для темы «Запись к школьному психологу»?"],
+  "questions":["Кто будет пользоваться решением для темы «Запись к школьному психологу»?","Какие данные или материалы и в каких форматах будут доступны для темы «Запись к школьному психологу»?","Как вы будете оценивать успешность результата по измеримым показателям или целевому значению для темы «Запись к школьному психологу»?"],
   "answers":{
     "Кто будет пользоваться решением для темы «Запись к школьному психологу»?":"Ученики и их родители",
     "Какие данные или материалы и в каких форматах будут доступны для темы «Запись к школьному психологу»?":"Расписание специалистов в CSV",
-    "Какой конкретный результат или готовый материал нужно подготовить для темы «Запись к школьному психологу»?":"Форма записи на консультацию"
+    "Как вы будете оценивать успешность результата по измеримым показателям или целевому значению для темы «Запись к школьному психологу»?":"Ожидание записи не более трех дней"
   }
 }
 ```
 
-`POST /form-card` can then fill `users`, `data_materials`, and `expected_result` with those exact answers. The placeholder in the draft does not overwrite the clarified user value; other unsupported fields remain `null`.
+`POST /form-card` can then fill `users`, `data_materials`, and `success_criteria` with those exact answers. The placeholder in the draft does not overwrite the clarified user value; other unsupported fields remain `null`. With a real key, question wording is generated dynamically, so always use the exact strings returned by that request.
