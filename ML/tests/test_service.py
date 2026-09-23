@@ -54,7 +54,7 @@ def test_empty_and_placeholder_keys_use_rule_based_fallback(monkeypatch):
         raise AssertionError("unconfigured key must not call OpenAI")
 
     monkeypatch.setattr(main, "OpenAI", unexpected_provider_call)
-    for key in ("", "your_openai_api_key_here", "not-an-openai-key"):
+    for key in ("", "your_openai_api_key_here", "PASTE_YOUR_OPENAI_API_KEY_HERE"):
         monkeypatch.setenv("OPENAI_API_KEY", key)
         questions = client.post(
             "/generate-questions", json={"draft_text": "A synthetic draft.", "topic": "Demo"}
@@ -68,6 +68,43 @@ def test_empty_and_placeholder_keys_use_rule_based_fallback(monkeypatch):
         assert card.headers["X-Generation-Mode"] == "rule-based-stub"
         assert "X-Generation-Notice" in questions.headers
         assert "X-Generation-Notice" in card.headers
+
+
+def test_arbitrary_configured_key_routes_to_mocked_provider(monkeypatch):
+    fake_key = "offline-fake-key-for-routing-test"
+    monkeypatch.setenv("OPENAI_API_KEY", fake_key)
+    assert main._configured_api_key() == fake_key
+
+    class FakeResponses:
+        def parse(self, *, text_format, **kwargs):
+            assert text_format is main.GeneratedQuestionSet
+            return type(
+                "Result",
+                (),
+                {
+                    "output_parsed": main.GeneratedQuestionSet(
+                        questions=[
+                            main.TargetedClarification(field="users", question="Who will use it?"),
+                            main.TargetedClarification(field="data_materials", question="What data is available?"),
+                            main.TargetedClarification(field="success_criteria", question="How will success be measured?"),
+                        ]
+                    )
+                },
+            )()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+        def __init__(self, *, api_key, **kwargs):
+            assert api_key == fake_key
+
+    monkeypatch.setattr(main, "OpenAI", FakeClient)
+    response = client.post(
+        "/generate-questions", json={"draft_text": "Synthetic draft", "topic": "Demo"}
+    )
+    assert response.status_code == 200
+    assert response.headers["X-Generation-Mode"] == "openai"
+    assert len(response.json()) == 3
 
 
 def test_questions_are_three_distinct_and_follow_russian_input(monkeypatch):

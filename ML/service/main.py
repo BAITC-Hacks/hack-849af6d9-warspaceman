@@ -225,9 +225,23 @@ def _is_non_answer(value: str | None) -> bool:
 
 
 def _configured_api_key() -> str:
-    """Treat blank and example placeholder values as unconfigured, without storing keys in code."""
+    """Return configured credentials unless empty or an obvious documentation placeholder.
+
+    A key's syntax does not establish that it is valid; the provider validates it when
+    a request is made. This check only prevents known placeholder text from being sent.
+    """
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    return api_key if api_key.startswith("sk-") else ""
+    placeholder_values = {
+        "paste_your_openai_api_key_here",
+        "your_openai_api_key_here",
+        "your_api_key_here",
+        "replace_with_your_openai_api_key",
+    }
+    if not api_key or _normalize_text(api_key) in {
+        _normalize_text(value) for value in placeholder_values
+    }:
+        return ""
+    return api_key
 
 
 def _labelled_values(text: str) -> dict[str, str]:
