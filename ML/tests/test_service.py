@@ -138,8 +138,10 @@ def test_ai_maps_answers_to_their_question_field_and_filters_inventions(monkeypa
 
     class FakeResponses:
         def parse(self, *, input, **kwargs):
-            assert "'answers_by_field'" in input[1]["content"]
-            assert "Finance analysts" in input[1]["content"]
+            evidence = json.loads(input[1]["content"])
+            assert evidence["question_answer_pairs"] == [
+                {"question": "Who will use it?", "answer": "Finance analysts"}
+            ]
             assert "untrusted data" in input[0]["content"]
             card = main.TaskCard(
                 context=None,
@@ -236,3 +238,157 @@ def test_malformed_question_response_returns_controlled_error(monkeypatch):
     response = client.post("/generate-questions", json={"draft_text": "", "topic": "Reports"})
     assert response.status_code == 502
     assert response.json() == {"detail": "Question generation failed."}
+
+
+def test_generated_question_flow_ignores_misleading_english_and_russian_topics(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cases = [
+        {
+            "draft_text": "We need a better onboarding process.",
+            "topic": "Customer data requirements",
+            "users_prefix": "Who will use",
+            "data_prefix": "What source data",
+            "success_prefix": "How will you determine",
+            "contact_prefix": "Who should be contacted",
+        },
+        {
+            "draft_text": "Нужен более понятный процесс адаптации.",
+            "topic": "Требования к данным пользователей",
+            "users_prefix": "Кто будет пользоваться",
+            "data_prefix": "Какие данные",
+            "success_prefix": "Как вы будете оценивать",
+            "contact_prefix": "С кем можно связаться",
+        },
+    ]
+    for case in cases:
+        generated = client.post(
+            "/generate-questions",
+            json={"draft_text": case["draft_text"], "topic": case["topic"]},
+        )
+        assert generated.status_code == 200
+        questions = generated.json()
+        assert len(questions) >= 3
+        assert len(questions) == len(set(questions))
+        user_question = next(q for q in questions if q.startswith(case["users_prefix"]))
+        data_question = next(q for q in questions if q.startswith(case["data_prefix"]))
+        success_question = next(q for q in questions if q.startswith(case["success_prefix"]))
+        contact_question = next(q for q in questions if q.startswith(case["contact_prefix"]))
+        contact_answer = "Contact details supplied for follow-up only."
+        answers = {
+            user_question: "Finance analysts",
+            data_question: "Monthly CSV exports",
+            success_question: "At least 90% complete onboarding",
+            contact_question: contact_answer,
+        }
+        card_response = client.post(
+            "/form-card",
+            json={"draft_text": case["draft_text"], "questions": questions, "answers": answers},
+        )
+        card = card_response.json()
+        assert card_response.status_code == 200
+        assert set(card) == CARD_FIELDS
+        assert card["users"] == "Finance analysts"
+        assert card["data_materials"] == "Monthly CSV exports"
+        assert card["success_criteria"] == "At least 90% complete onboarding"
+        assert contact_answer not in json.dumps(card, ensure_ascii=False)
+
+
+def test_generated_followup_question_flow_maps_fields_despite_topic_keywords(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    draft = "\n".join(
+        [
+            "context: Existing workflow",
+            "need: Improve the workflow",
+            "users: Operations staff",
+            "data: Monthly records",
+            "constraints: Two-week pilot",
+            "expected_result: A revised workflow",
+            "success_criteria: Fewer errors",
+            "contact: Pilot coordinator",
+            "interaction_format: Weekly meetings",
+        ]
+    )
+    for topic, prefixes in [
+        (
+            "Customer data requirements",
+            ("Is there any additional detail to add about users", "Is there any additional detail to add about data materials"),
+        ),
+        (
+            "Требования к данным пользователей",
+            ("Есть ли дополнительные сведения о пользователях", "Есть ли дополнительные сведения о данных и материалах"),
+        ),
+    ]:
+        generated = client.post("/generate-questions", json={"draft_text": draft, "topic": topic})
+        questions = generated.json()
+        assert len(questions) >= 3
+        user_question = next(q for q in questions if q.startswith(prefixes[0]))
+        data_question = next(q for q in questions if q.startswith(prefixes[1]))
+        answers = {user_question: "Support analysts", data_question: "Approved CSV exports"}
+        response = client.post(
+            "/form-card",
+            json={"draft_text": draft, "questions": questions, "answers": answers},
+        )
+        assert response.status_code == 200
+        assert response.json()["users"] == "Support analysts"
+        assert response.json()["data_materials"] == "Approved CSV exports"
+
+
+def test_ambiguous_fallback_question_is_not_guessed(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    response = client.post(
+        "/form-card",
+        json={
+            "draft_text": "",
+            "questions": ["What should we document about user data requirements?"],
+            "answers": {
+                "What should we document about user data requirements?": "Team roster",
+                "Which details should we clarify for ‘users’?": "Another ambiguous answer",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert all(value is None for value in response.json().values())
+
+
+def test_ai_can_interpret_unknown_question_and_receives_original_pair(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    unfamiliar_question = "Which groups are affected in their day-to-day work?"
+    answer = "Night-shift librarians"
+
+    class FakeResponses:
+        def parse(self, *, input, **kwargs):
+            evidence = json.loads(input[1]["content"])
+            assert evidence["draft_text"] == ""
+            assert evidence["questions"] == [unfamiliar_question]
+            assert evidence["question_answer_pairs"] == [
+                {"question": unfamiliar_question, "answer": answer}
+            ]
+            card = main.TaskCard(
+                context=None,
+                need=None,
+                users=answer,
+                data_materials="Invented data source",
+                constraints=None,
+                expected_result=None,
+                success_criteria=None,
+            )
+            return type("Result", (), {"output_parsed": card})()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(main, "OpenAI", FakeClient)
+    response = client.post(
+        "/form-card",
+        json={
+            "draft_text": "",
+            "questions": [unfamiliar_question],
+            "answers": {unfamiliar_question: answer},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["users"] == answer
+    assert response.json()["data_materials"] is None

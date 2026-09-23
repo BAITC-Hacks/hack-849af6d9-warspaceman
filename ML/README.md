@@ -1,6 +1,6 @@
 # ML service
 
-This FastAPI service generates clarifying questions and forms a task card. It supports English and Russian prompts and answers. Card values come from the draft or the answer associated with a matching question; unsupported values are `null`.
+This FastAPI service generates clarifying questions and forms a task card. It supports English and Russian prompts and answers. Card values must be grounded in the draft or submitted answers; unknown fields are `null`. The AI path receives the original question-answer pairs so it can interpret unfamiliar wording. Its text check confirms a returned value appears in submitted evidence, but that check alone cannot prove the value was assigned to the semantically correct field.
 
 ## Setup
 
@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-The service works without an API key using its labelled rule-based fallback. To enable AI extraction, set `OPENAI_API_KEY` in your shell environment or environment manager; never put a real key in a repository file. Leave it unset to use the fallback. You can optionally set `OPENAI_MODEL`; the default is `gpt-4o-mini`. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
+The service works without an API key using its labelled rule-based fallback. That fallback recognizes explicitly labelled fields, the service's generated question templates, and unambiguous question wording; unfamiliar or ambiguous answer questions are left unmapped. To enable AI extraction, set `OPENAI_API_KEY` in your shell environment or environment manager; never put a real key in a repository file. Leave it unset to use the fallback. You can optionally set `OPENAI_MODEL`; the default is `gpt-4o-mini`. The question endpoint returns the language of the draft or topic. Answers in `/form-card` must be keyed by their question text.
 
 ## Launch
 
