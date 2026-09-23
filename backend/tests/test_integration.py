@@ -16,11 +16,11 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_database_path.as_posix()}"
 
 from app.core import config  # noqa: E402
 from app.core.db import Base, engine  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import app, create_app  # noqa: E402
 from app.models import ClarifyingQuestion, Proposal, Task, Team  # noqa: E402,F401
 from app.services import ai_client  # noqa: E402
 from app.services.rating import calculate_rating, readiness_for_score  # noqa: E402
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 
 QUESTIONS = [
@@ -368,6 +368,99 @@ class BackendIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(noop.status_code, 200, noop.text)
         self.assertEqual(noop.json()["status"], "pending")
+
+    async def test_private_demo_admin_disabled_and_seed_is_idempotent(self):
+        disabled = create_app(demo_enabled=False, demo_token="")
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=disabled), base_url="http://testserver") as client:
+            for path in ("/admin/demo", "/admin/demo/", "/admin/demo/status", "/admin/demo/seed"):
+                response = await (client.post(path) if path.endswith("seed") else client.get(path))
+                self.assertEqual(response.status_code, 404)
+            self.assertNotIn("/admin/demo/status", disabled.openapi()["paths"])
+
+        token = "A" * 43
+        with patch.dict(os.environ, {"DEMO_ADMIN_TOKEN": token}):
+            enabled = create_app(demo_enabled=True, demo_token=token)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=enabled), base_url="http://testserver") as client:
+                page = await client.get("/admin/demo")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn("local demo", page.text.lower())
+                self.assertNotIn(token, page.text)
+                self.assertNotIn("fetch(", page.text.split("<script>", 1)[1].split("</script>", 1)[0].split("onclick", 1)[0])
+                for header in ("cache-control", "x-content-type-options", "x-frame-options"):
+                    self.assertIn(header, page.headers)
+                self.assertEqual((await client.get("/admin/demo/status")).status_code, 403)
+                self.assertEqual((await client.get("/admin/demo/status", headers={"X-Demo-Admin-Token": "bad"})).status_code, 403)
+                before_calls = len(self.requests)
+                headers = {"X-Demo-Admin-Token": token}
+                status = await client.get("/admin/demo/status", headers=headers)
+                self.assertEqual(status.status_code, 200, status.text)
+                self.assertFalse(status.json()["seeded"])
+                from app.core.db import SessionLocal
+                async with SessionLocal() as session:
+                    manual_team = Team(name="Manual record", interests="Demo")
+                    session.add(manual_team)
+                    await session.commit()
+                    manual_team_id = manual_team.id
+                first, second = await __import__("asyncio").gather(
+                    client.post("/admin/demo/seed", headers=headers),
+                    client.post("/admin/demo/seed", headers=headers),
+                )
+                self.assertTrue(all(result.status_code in (200, 201, 409) for result in (first, second)))
+                self.assertIn(201, (first.status_code, second.status_code))
+                self.assertEqual(len(self.requests), before_calls)
+                result = first if first.status_code != 409 else second
+                self.assertEqual(result.json()["created_counts"], {"tasks": 13, "confirmed_tasks": 8, "drafts": 5, "teams": 5, "proposals": 10})
+                counts = {"tasks": 13, "confirmed_tasks": 8, "drafts": 5, "teams": 6, "proposals": 10}
+                status = await client.get("/admin/demo/status", headers=headers)
+                self.assertTrue(status.json()["seeded"])
+                self.assertEqual(status.json()["counts"], counts)
+                async with SessionLocal() as session:
+                    self.assertIsNotNone(await session.get(Team, manual_team_id))
+                catalog = await client.get("/tasks")
+                self.assertEqual(len(catalog.json()), 8)
+                self.assertEqual({item["readiness_level"] for item in catalog.json()}, {"draft", "working", "ready", "priority"})
+                for item in catalog.json():
+                    score, breakdown, _ = calculate_rating(type("RatingCard", (), item)())
+                    self.assertEqual(item["rating_score"], score)
+                    self.assertEqual(item["rating_breakdown"], breakdown)
+                async with SessionLocal() as session:
+                    seeded = (await session.execute(select(Task).where(Task.status == "confirmed"))).scalars().first()
+                    original_title = seeded.title
+                await client.patch(f"/tasks/{seeded.id}", json={"title": "Manual edit survives"})
+                repeat = await client.post("/admin/demo/seed", headers=headers)
+                self.assertEqual(repeat.status_code, 200)
+                self.assertEqual(repeat.json()["state"], "already_seeded")
+                async with SessionLocal() as session:
+                    current = await session.get(Task, seeded.id)
+                    self.assertEqual(current.title, "Manual edit survives")
+                    self.assertNotEqual(current.title, original_title)
+
+    async def test_demo_admin_rejects_invalid_token_configuration(self):
+        for token in ("", "short token", "non-url-safe-" + "!" * 30):
+            response = await self._admin_request(create_app(demo_enabled=True, demo_token=token))
+            self.assertEqual(response.status_code, 404)
+
+    async def test_demo_seed_failure_rolls_back_all_fixture_rows(self):
+        token = "B" * 43
+        with patch.dict(os.environ, {"DEMO_ADMIN_TOKEN": token}), patch(
+            "app.services.demo_seed._proposals", side_effect=RuntimeError("fixture failure")
+        ):
+            enabled = create_app(demo_enabled=True, demo_token=token)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=enabled, raise_app_exceptions=False),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post("/admin/demo/seed", headers={"X-Demo-Admin-Token": token})
+                self.assertEqual(response.status_code, 500)
+        from app.models import DemoSeedManifest
+        from app.core.db import SessionLocal
+        async with SessionLocal() as session:
+            for model in (DemoSeedManifest, Task, Team, Proposal):
+                self.assertEqual(await session.scalar(select(func.count()).select_from(model)), 0)
+
+    async def _admin_request(self, application):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://testserver") as client:
+            return await client.get("/admin/demo")
 
 
 class RatingUnitTests(unittest.TestCase):

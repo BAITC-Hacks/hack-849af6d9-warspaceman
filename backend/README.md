@@ -59,3 +59,42 @@ started separately from `ML/` for a live integration check.
   clarification questions when ML is unavailable.
 - Existing nonempty card fields are preserved without recording their origin.
 - The SQLite schema is created with `create_all`; no migration system is used.
+
+## Private local demo admin
+
+The optional local panel at `/admin/demo` is disabled by default. It is a
+private demo helper, not production authentication. When enabled with a
+valid `DEMO_ADMIN_ENABLED=true` and a URL-safe `DEMO_ADMIN_TOKEN` of at least
+32 characters, it provides status and a one-time fixed `demo-v1` seed. The
+seed adds 5 unconfirmed clarification drafts, 8 confirmed rated cards, 5
+fictional teams, and 10 proposals. It makes no ML or network calls, never
+selects a team, and does not reset or overwrite existing records. Repeated
+seed requests return `already_seeded`. Its private API is described in
+[DEMO_ADMIN_API.md](DEMO_ADMIN_API.md); future endpoint ideas are in
+[API_PROPOSALS.md](API_PROPOSALS.md).
+
+Generate a token locally with Docker (the daemon must be available):
+
+```powershell
+docker compose run --rm --no-deps backend python -c "import secrets; print(secrets.token_urlsafe(32))"
+$env:DEMO_ADMIN_TOKEN = 'paste-the-generated-value-here'
+docker compose -f docker-compose.yml -f backend/compose.demo.yml up --build -d --no-deps backend
+```
+
+Open `http://localhost:8000/admin/demo` (or `/api/admin/demo` when using the
+frontend proxy). Paste the token in the password field. It remains in page
+memory and is sent only in `X-Demo-Admin-Token`. Do not put it in URLs or
+commit it. Merely editing an env file does not update a running container;
+recreate the backend. To disable the panel:
+
+```powershell
+docker compose -f docker-compose.yml up -d --no-deps --force-recreate backend
+```
+
+This recreates from the base Compose configuration, where the admin is
+disabled by default. Restarting alone does not disable changed environment
+settings. The demo dataset remains in the existing database volume.
+
+Run the regression suite from `backend/` with
+`python -m unittest discover -s tests -v`. It uses an isolated temporary
+database and never touches the running demo database.
