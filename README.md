@@ -1,675 +1,186 @@
-# Hack Alem AI 2026 — Business Task Readiness Platform
+﻿# Hack Alem AI 2026 — Business Task Catalog
 
-MVP веб-платформы, которая помогает бизнесу превратить сырое описание задачи в структурированную задачу для студенческой команды.
+An MVP for turning a business need into an editable, rated task card, publishing confirmed tasks to a catalog, and letting student teams submit proposals for a manual business decision.
 
-Система:
-
-- принимает короткое описание бизнес-задачи;
-- задаёт уточняющие вопросы;
-- формирует редактируемую карточку;
-- рассчитывает рейтинг готовности задачи от **0 до 100**;
-- показывает, какой информации не хватает;
-- позволяет улучшить задачу и пересчитать рейтинг;
-- публикует подтверждённые задачи в общий каталог;
-- позволяет студенческим командам отправлять свои решения;
-- оставляет финальный выбор команды за представителем бизнеса.
-
-**Hack Alem AI 2026**
-Трек: **Образование**
-
----
-
-## Проблема
-
-Бизнес часто формулирует задачи слишком коротко:
-
-> «Нам нужен сервис для автоматизации отчётов».
-
-Студенческой команде из такого описания непонятно:
-
-- кто будет пользоваться решением;
-- какие данные доступны;
-- какой результат ожидается;
-- какие есть ограничения;
-- по каким критериям будет оцениваться успех.
-
-Из-за этого команда тратит время не на решение задачи, а на выяснение требований.
-
-## Решение
-
-Наша платформа помогает превратить короткое описание в полноценную карточку задачи.
-
-Пример сценария:
+## Architecture
 
 ```text
-Короткое описание бизнеса
-        ↓
-AI / rule-based уточняющие вопросы
-        ↓
-Ответы представителя бизнеса
-        ↓
-Редактируемая карточка задачи
-        ↓
-Рейтинг готовности 0–100
-        ↓
-Рекомендации по улучшению
-        ↓
-Публикация в каталог
-        ↓
-Отклик студенческой команды
-        ↓
-Ручной выбор бизнеса
+Browser
+  │ HTTP/JSON on /api
+  ▼
+Frontend: React + Vite build, served by Nginx (:80 in Docker)
+  │ /api/* is proxied to backend:8000 with the prefix removed
+  ▼
+Backend: FastAPI (:8000) ──HTTP/JSON──▶ ML service: FastAPI (:8001)
+  │                                     └─ rule-based fallback without a key
+  └─ SQLite database at /data/app.db (persistent Docker volume)
 ```
 
-Главная механика геймификации направлена на **качество бизнес-задачи**: чем лучше она подготовлена, тем выше её рейтинг готовности.
+The service contract is documented in [docs/API_CONTRACT.md](docs/API_CONTRACT.md). The backend keeps the public API paths unchanged. In Docker, the browser calls `/api`; Nginx removes that prefix before forwarding requests to FastAPI.
+Inside Compose the backend calls `http://ml:8001`; local backend development defaults to `http://localhost:8001`.
 
----
+## Problem and solution
 
-# Возможности
+Business requests often start as short descriptions that leave student teams unsure about users, available data, expected outcomes, constraints, and success measures. The platform guides a business user through clarification, presents an editable task card, rates its readiness, and publishes confirmed tasks for student proposals. The business user keeps the final team decision.
 
-### Для бизнеса
+### MVP capabilities
 
-- создать черновик задачи;
-- получить не менее трёх уточняющих вопросов;
-- получить автоматически сформированную карточку;
-- редактировать карточку;
-- увидеть рейтинг готовности;
-- увидеть недостающие поля;
-- получить рекомендации по улучшению;
-- сохранить изменения и пересчитать рейтинг;
-- опубликовать задачу;
-- посмотреть отклики команд;
-- вручную принять или отклонить предложение.
+- Business user creates a task and receives at least three clarification questions.
+- The submitted answers are saved with their questions and used to produce an editable card.
+- The card receives a deterministic readiness score and field-level improvement guidance.
+- Confirmed tasks appear in the shared catalog, including low-rated tasks; catalog filters support topic and readiness, with rating sort.
+- Student teams submit an idea, plan, duration/deadline, and prototype link.
+- Business users review proposals and manually accept or reject them. There is no automatic team assignment.
 
-### Для студенческой команды
+The MVP uses a demonstration role switch in the frontend. Authentication and advanced access control are outside its scope.
 
-- просматривать общий каталог;
-- фильтровать задачи по теме и уровню готовности;
-- сортировать задачи по рейтингу;
-- открыть полную карточку задачи;
-- выбрать команду;
-- отправить:
-  - идею решения;
-  - план;
-  - срок;
-  - ссылку на прототип;
-- увидеть статус своего предложения.
+### Technologies and repository layout
 
-> В MVP используется демонстрационное переключение ролей **Business / Student-Team**. Полная система авторизации намеренно не реализована.
-
----
-
-# Архитектура
-
-```text
-┌─────────────────────────────┐
-│       React + Vite          │
-│       Frontend :5173        │
-└──────────────┬──────────────┘
-               │ HTTP / JSON
-               ▼
-┌─────────────────────────────┐
-│         FastAPI             │
-│        Backend :8000        │
-│                             │
-│ Tasks / Rating / Teams      │
-│ Proposals / SQLite          │
-└──────────────┬──────────────┘
-               │ HTTP / JSON
-               ▼
-┌─────────────────────────────┐
-│         FastAPI             │
-│       AI service :8100      │
-│                             │
-│ /generate-questions         │
-│ /form-card                  │
-└──────────────┬──────────────┘
-               │ optional
-               ▼
-         OpenAI API
-```
-
-Backend является центральной точкой для frontend.
-
-Frontend **не обращается напрямую к AI-сервису**.
-
----
-
-# Технологии
-
-## Frontend
-
-- React
-- Vite
-- JavaScript
-- Fetch API
-- CSS
-
-## Backend
-
-- Python
-- FastAPI
-- SQLAlchemy
-- SQLite
-- aiosqlite
-- Pydantic
-- HTTPX
-
-## AI service
-
-- Python
-- FastAPI
-- OpenAI API
-- Structured output / Pydantic
-- Rule-based fallback
-
----
-
-# Структура репозитория
+- **Frontend:** React, Vite, Fetch API, CSS.
+- **Backend:** FastAPI, SQLAlchemy async, SQLite, aiosqlite, Pydantic, HTTPX.
+- **ML service:** FastAPI, OpenAI structured output when configured, and a rule-based fallback without a key.
 
 ```text
 .
-├── AGENTS.md
-├── README.md
-├── docs/
-│   └── API_CONTRACT.md
-│
-├── frontend/
-│   ├── AGENTS.md
-│   ├── package.json
-│   └── src/
-│       ├── api/
-│       ├── components/
-│       ├── pages/
-│       ├── App.jsx
-│       └── styles.css
-│
-├── backend/
-│   ├── AGENTS.md
-│   ├── requirements.txt
-│   └── app/
-│       ├── api/routes/
-│       ├── core/
-│       ├── models/
-│       ├── schemas/
-│       ├── services/
-│       └── main.py
-│
-└── ML/
-    ├── AGENTS.md
-    ├── requirements.txt
-    └── service/
-        └── main.py
+├── docker-compose.yml
+├── docs/API_CONTRACT.md
+├── frontend/       React/Vite app and Nginx packaging
+├── backend/        FastAPI routes, models, rating, and ML adapter
+└── ML/             FastAPI question and card service (uppercase path)
 ```
 
-Описание API находится в:
+The frontend talks only to the backend API. The backend calls the ML service; if it is unavailable, the backend's deterministic fallback keeps the main flow usable.
 
-```text
-docs/API_CONTRACT.md
+## Run the complete application with Docker
+
+Use Docker Desktop in **Linux-container mode** and run from the repository root:
+
+```sh
+docker compose up --build -d
 ```
 
----
+Open [http://localhost:8080](http://localhost:8080). This builds a static frontend image and starts `frontend`, `backend`, and `ml`. It is not a hot-reload development setup: rebuild after source changes with the same command.
 
-# Быстрый запуск
+| Service | Container port | Host access | Health check |
+|---|---:|---|---|
+| frontend (Nginx) | 80 | `127.0.0.1:8080` | Static HTTP response |
+| backend (FastAPI) | 8000 | Compose network only | `GET /teams` checks app and database |
+| ml (FastAPI) | 8001 | Compose network only | `GET /health` |
 
-Нужно установить:
+Only the frontend is published to the host. Set `FRONTEND_PORT` in the environment or `.env.local` to use another host port. Ports 8000 and 8001 are not published, so local development servers may use them.
 
-- Python 3.10+
-- Node.js / npm
-- Git
+The first build needs network access to download the official base images and the dependencies listed in the existing backend, ML, and frontend lock files. Containers use Linux Python and Node images; they do not use host Python, Node, virtual environments, `node_modules`, or a committed `dist` directory.
 
-Для базового запуска проекта ключ OpenAI **не обязателен**.
+### Optional local configuration
 
----
-
-## 1. Клонирование
-
-```bash
-git clone https://github.com/BAITC-Hacks/hack-849af6d9-warspaceman.git
-cd hack-849af6d9-warspaceman
-```
-
----
-
-## 2. Запуск AI-сервиса
-
-Откройте первый терминал:
-
-```bash
-cd ML
-python -m venv venv
-```
-
-### Windows PowerShell
+The stack works without an API key and does not require an environment file. To set optional values, copy the secret-free example and edit the ignored local file:
 
 ```powershell
-.\venv\Scripts\Activate.ps1
+Copy-Item .env.example .env.local
 ```
 
-### Linux / macOS
+Then launch with:
 
-```bash
-source venv/bin/activate
+```sh
+docker compose --env-file .env.local up --build -d
 ```
 
-Установите зависимости:
+`OPENAI_API_KEY` is passed only to the ML container at runtime. Leave it empty to use the ML service's labelled rule-based mode. `OPENAI_MODEL` is optional and defaults to `gpt-4o-mini`. Do not put a real key in the tracked root `.env`, frontend variables, image build arguments, or source files. The root `.env` is currently tracked and empty; use `.env.local` for private values.
 
-```bash
-pip install -r requirements.txt
+Startup and health checks do not make paid provider requests. To opt into a separate provider-backed check, put your key in `.env.local`, start or recreate the ML service with `docker compose --env-file .env.local up -d --force-recreate ml`, then create a task through the UI or call `POST /api/tasks`. That request invokes the provider when the key is configured and may incur provider charges.
+
+### Check status, logs, and stop
+
+```sh
+docker compose ps
+docker compose logs -f frontend backend ml
+docker compose down
 ```
 
-Запустите сервис:
+`docker compose ps` reports service health. The checks make local HTTP calls only: frontend static content, backend `GET /teams`, and ML `GET /health`. Healthy containers show that processes and local dependencies respond; they do not prove real AI quality or that a paid provider was used.
 
-```bash
-uvicorn service.main:app --reload --port 8100
+The backend SQLite database is stored in the named `backend-data` volume at `/data/app.db`. The image prepares a writable `/data` directory for its non-root user. The data remains available across container recreation and ordinary `docker compose down` followed by `up`. Normal shutdown does not remove the volume. Do not remove the volume unless you intend to permanently erase the demo database.
+
+If port 8080 is occupied, set `FRONTEND_PORT` to a free port. If Docker reports it cannot connect to the engine, start Docker Desktop, switch it to Linux containers, wait for the engine to become ready, then retry the Compose command.
+
+### Rebuild and run backend regression tests
+
+Rebuild after changing frontend, backend, or ML source:
+
+```sh
+docker compose up --build -d
 ```
 
-Проверка:
+The backend image includes the regression tests. Run them in the Linux Python image with:
 
-```text
-http://localhost:8100/health
+```sh
+docker compose run --rm --no-deps backend python -m unittest discover -s tests -v
 ```
 
-Ожидаемый ответ:
+The suite uses a temporary SQLite database and mocked outbound ML HTTP; it does not modify the persistent demo database or make paid calls. A separate no-key smoke test against the real running ML container is needed to verify service-to-service connectivity and rule-based responses.
 
-```json
-{
-  "status": "ok"
-}
-```
+## Local development without Docker
 
-### OpenAI API — опционально
+Run each service from its own directory. The ML directory is uppercase `ML/`.
 
-Для использования модели можно установить:
+Backend, from `backend/`:
 
-```powershell
-$env:OPENAI_API_KEY="your-key"
-```
-
-Linux/macOS:
-
-```bash
-export OPENAI_API_KEY="your-key"
-```
-
-Если ключ отсутствует, AI-сервис использует локальный rule-based fallback.
-
----
-
-## 3. Запуск backend
-
-Откройте второй терминал:
-
-```bash
-cd backend
-python -m venv venv
-```
-
-### Windows PowerShell
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
-### Linux / macOS
-
-```bash
-source venv/bin/activate
-```
-
-Затем:
-
-```bash
-pip install -r requirements.txt
+```sh
+python -m pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Backend автоматически использует SQLite и создаёт необходимые таблицы при запуске.
+ML, from `ML/`:
 
-По умолчанию AI-сервис ожидается здесь:
-
-```text
-http://localhost:8100
+```sh
+python -m pip install -r requirements-dev.txt
+uvicorn service.main:app --reload --port 8001
 ```
 
-При необходимости адрес можно изменить:
+Frontend, from `frontend/`:
 
-```powershell
-$env:ML_SERVICE_URL="http://localhost:8100"
-```
-
-FastAPI Swagger:
-
-```text
-http://localhost:8000/docs
-```
-
----
-
-## 4. Запуск frontend
-
-Откройте третий терминал:
-
-```bash
-cd frontend
-npm install
-```
-
-### Windows PowerShell
-
-```powershell
-$env:VITE_API_BASE_URL="http://localhost:8000"
+```sh
+npm ci
 npm run dev
 ```
 
-Linux/macOS:
+The Vite development server is available at [http://localhost:5173](http://localhost:5173). For local cross-origin API calls, set `VITE_API_BASE_URL=http://localhost:8000` in the frontend's local Vite environment. The Docker build sets `VITE_API_BASE_URL=/api` at build time.
 
-```bash
-VITE_API_BASE_URL=http://localhost:8000 npm run dev
-```
+## Rating model
 
-Откройте:
+The task rating is deterministic and ranges from 0 to 100. Points are awarded only when the corresponding information is present:
 
-```text
-http://localhost:5173
-```
-
----
-
-# Как проверить решение
-
-Ниже приведён полный сценарий, который можно пройти через интерфейс.
-
-## Шаг 1 — создать бизнес-задачу
-
-Выберите роль:
-
-```text
-Business
-```
-
-Нажмите:
-
-```text
-Create task
-```
-
-Введите слабое описание, например:
-
-```text
-Нам нужен сервис, который поможет сотрудникам быстрее готовить ежемесячные отчёты.
-```
-
-Тема:
-
-```text
-Автоматизация отчётности
-```
-
-Нажмите:
-
-```text
-Submit draft
-```
-
----
-
-## Шаг 2 — ответить на уточняющие вопросы
-
-Система вернёт минимум три вопроса.
-
-Например:
-
-```text
-Кто будет пользоваться решением?
-Какие данные доступны?
-Какой результат должен быть получен?
-```
-
-Ответьте на вопросы и сохраните ответы.
-
-После этого система сформирует редактируемую карточку задачи.
-
----
-
-## Шаг 3 — проверить рейтинг
-
-После формирования карточки появятся:
-
-- рейтинг от 0 до 100;
-- уровень готовности;
-- breakdown рейтинга;
-- недостающие сведения;
-- рекомендации.
-
-Например:
-
-```text
-Readiness: 45
-Working
-
-How to improve:
-- Define measurable success criteria
-- List available data
-- Specify interaction format
-```
-
----
-
-## Шаг 4 — увеличить рейтинг
-
-Заполните недостающие поля.
-
-Например:
-
-```text
-Data and materials:
-CSV-файлы с данными за последние 12 месяцев
-
-Success criteria:
-Время подготовки отчёта должно уменьшиться минимум на 50%
-
-Interaction format:
-30-минутная консультация раз в неделю
-```
-
-Нажмите:
-
-```text
-Save & recalculate
-```
-
-Рейтинг должен измениться.
-
-Именно таким образом демонстрируется основная механика геймификации.
-
----
-
-## Шаг 5 — опубликовать задачу
-
-Нажмите:
-
-```text
-Publish task
-```
-
-После подтверждения задача появится в каталоге.
-
-В каталоге доступны:
-
-- фильтр по теме;
-- фильтр по уровню готовности;
-- сортировка по рейтингу.
-
-Уровни:
-
-```text
-Draft      0–39
-Working    40–69
-Ready      70–89
-Priority   90–100
-```
-
----
-
-# Подготовка команды для отклика
-
-Для отправки предложения должна существовать хотя бы одна команда.
-
-Проверить команды можно через:
-
-```text
-GET http://localhost:8000/teams
-```
-
-Если список пустой, команду можно быстро создать через Swagger:
-
-```text
-http://localhost:8000/docs
-```
-
-или через curl:
-
-```bash
-curl -X POST http://localhost:8000/teams \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Cyber Owls",
-    "interests": "AI and automation",
-    "skills": "Python, React, FastAPI",
-    "technologies": "React, FastAPI, OpenAI"
-  }'
-```
-
----
-
-# Проверка отклика студентов
-
-Переключите роль:
-
-```text
-Student / Team
-```
-
-Откройте опубликованную задачу.
-
-Выберите команду.
-
-Заполните предложение:
-
-```text
-Idea:
-Создать веб-приложение для автоматического формирования отчётов.
-
-Plan:
-1. Анализ входных данных
-2. Создание прототипа
-3. Генерация отчёта
-4. Тестирование
-
-Deadline:
-3 days
-
-Prototype link:
-https://example.com
-```
-
-Нажмите:
-
-```text
-Submit proposal
-```
-
----
-
-# Проверка решения бизнеса
-
-Не закрывая карточку задачи, переключитесь обратно:
-
-```text
-Business
-```
-
-Бизнес увидит список предложений.
-
-Для каждого pending-предложения доступны ручные действия:
-
-```text
-Accept
-Reject
-```
-
-Система **не выбирает команду автоматически**.
-
-Это решение всегда принимает представитель бизнеса.
-
----
-
-# Рейтинг готовности
-
-Максимум:
-
-```text
-100 баллов
-```
-
-| Категория | Баллы |
+| Card information | Points |
 |---|---:|
-| Контекст + потребность | 20 |
-| Данные и материалы | 20 |
-| Ожидаемый результат | 15 |
-| Критерии успеха | 15 |
-| Ограничения | 10 |
-| Пользователи | 10 |
-| Контакт + формат взаимодействия | 10 |
-| **Всего** | **100** |
+| Context and need | 20 |
+| Data and materials | 20 |
+| Expected result | 15 |
+| Success criteria | 15 |
+| Constraints | 10 |
+| Users | 10 |
+| Business contact and interaction format | 10 |
 
-Уровни готовности:
+Readiness levels are `draft` (0–39), `working` (40–69), `ready` (70–89), and `priority` (90–100). Confirmed tasks remain visible in the catalog regardless of rating; catalog filters include topic and readiness, with optional rating sort. Business users make proposal decisions manually; the backend never automatically assigns a team.
 
-| Баллы | Уровень |
-|---:|---|
-| 0–39 | Draft |
-| 40–69 | Working |
-| 70–89 | Ready |
-| 90–100 | Priority |
+## Demo flow
 
-Рейтинг рассчитывается backend-сервисом.
+1. Create a task from a short business description and answer the clarification questions.
+2. Review and edit the task card, then confirm it and inspect its rating.
+3. Find the confirmed task in the catalog and submit a team proposal.
+4. Review proposals and accept or reject them manually as the business user.
 
-Frontend не содержит собственной формулы рейтинга.
+Use synthetic demo data. The rating, catalog, and proposal flow does not require provider-backed AI.
 
----
+### Walkthrough details
 
-# AI-функция
+1. Choose the business role and create a task from a short request such as “We need a service to help employees prepare monthly reports faster.” A topic such as `Reporting` is optional.
+2. Answer the returned clarification questions. Review the generated card and edit fields directly; the business user controls the final card contents.
+3. Confirm the card and inspect the 0–100 score, readiness level, breakdown, missing fields, and suggestions. Fill missing information and save changes; edits to a confirmed task recalculate its rating.
+4. Publish by confirming the task. Open the catalog and try topic filtering, readiness filtering, or rating sort. Low scores do not hide confirmed tasks.
+5. Create/select a student team, open the published task, and send a proposal with an idea, plan, estimated duration/deadline, and prototype link.
+6. Return to the business role, review the proposals, and manually accept or reject one. The API never selects a team automatically.
 
-AI используется для двух задач:
-
-### Генерация уточняющих вопросов
-
-```text
-POST /generate-questions
-```
-
-На основании исходного описания система определяет, какой информации не хватает.
-
-### Формирование карточки
-
-```text
-POST /form-card
-```
-
-Ответы пользователя преобразуются в структурированные поля карточки.
-
-AI не должен придумывать факты, которых пользователь не сообщал.
-
-Если OpenAI API недоступен или ключ не настроен, предусмотрен rule-based fallback.
-
-Кроме того, backend имеет собственный fallback, поэтому основной сценарий не должен полностью падать при недоступности AI-сервиса.
-
----
-
-# Основные backend API
-
-### Tasks
+For a focused API demo, the backend endpoints are:
 
 ```text
 POST  /tasks
@@ -678,89 +189,41 @@ PATCH /tasks/{id}
 POST  /tasks/{id}/confirm
 GET   /tasks/{id}/rating
 GET   /tasks
-```
-
-### Teams
-
-```text
-POST /teams
-GET  /teams
-```
-
-### Proposals
-
-```text
+POST  /teams
+GET   /teams
 POST  /tasks/{id}/proposals
 GET   /tasks/{id}/proposals
 PATCH /proposals/{id}
 ```
 
-Полный формат запросов и ответов:
+The full request/response shapes and nullable fields are in the [API contract](docs/API_CONTRACT.md). To prepare for proposal submission, first ensure at least one team exists; teams can be created from the UI or with `POST /teams` through the API. Proposal decisions use the documented `pending`, `accepted`, and `rejected` statuses and remain a business action.
 
-```text
-docs/API_CONTRACT.md
-```
+### Rating and readiness reference
 
----
+| Category | Points |
+|---|---:|
+| Context and need | 20 |
+| Data and materials | 20 |
+| Expected result | 15 |
+| Success criteria | 15 |
+| Constraints | 10 |
+| Users | 10 |
+| Business contact and interaction format | 10 |
+| **Maximum** | **100** |
 
-# Что проверить жюри
+| Score | Readiness |
+|---:|---|
+| 0–39 | Draft |
+| 40–69 | Working |
+| 70–89 | Ready |
+| 90–100 | Priority |
 
-Для полной проверки решения достаточно пройти один сценарий:
+The backend owns this formula; the frontend displays the response and does not calculate its own score. Points count when the required card information is present.
 
-```text
-1. Business создаёт слабое описание
-2. Система задаёт уточняющие вопросы
-3. Business отвечает
-4. Формируется карточка
-5. Появляется рейтинг и рекомендации
-6. Business дополняет карточку
-7. Save & recalculate показывает рост рейтинга
-8. Business публикует задачу
-9. Задача появляется в каталоге
-10. Student / Team открывает задачу
-11. Команда отправляет предложение
-12. Business вручную принимает или отклоняет его
-```
+### ML behavior
 
-Таким образом проверяется полный сквозной сценарий:
+The ML service exposes `POST /generate-questions` and `POST /form-card`. Without `OPENAI_API_KEY`, it uses a labelled rule-based response and makes no provider request. With a key, task creation and answer submission may invoke the configured provider. Container health checks call only local health routes and do not indicate whether provider-backed AI ran or whether its output is high quality.
 
-```text
-Draft
-→ Clarification
-→ Task Card
-→ Rating
-→ Improvement
-→ Publication
-→ Catalog
-→ Proposal
-→ Business Decision
-```
+## Scope of the MVP
 
----
-
-# Особенности MVP
-
-Проект создан в рамках 5-часового хакатона, поэтому сознательно не реализованы:
-
-- полноценная регистрация;
-- восстановление пароля;
-- сложная ролевая модель;
-- чат;
-- уведомления;
-- файловое хранилище;
-- production deployment;
-- полноценный project tracker.
-
-Цель MVP — продемонстрировать работающий путь от сырой бизнес-задачи до выбора студенческой команды.
-
----
-
-# API Contract
-
-Контракт между frontend, backend и AI-сервисом находится здесь:
-
-```text
-docs/API_CONTRACT.md
-```
-
-Он является источником структуры запросов и ответов проекта.
+The demo focuses on the task-to-proposal flow. User registration, password recovery, complex role management, chat, notifications, file storage, payment, and automatic team assignment are not included.
